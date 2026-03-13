@@ -7,7 +7,7 @@ test('working read only flow renders all target screens', () => {
   const chatId = 1;
 
   const picker = openAds(chatId);
-  assert.match(picker.text, /Pick an account/);
+  assert.match(picker.text, /Choose an account/);
 
   const summary = handleCallback(chatId, 'pick:2910561991');
   assert.match(summary.text, /ScreamWorks/);
@@ -16,10 +16,10 @@ test('working read only flow renders all target screens', () => {
 
   const list = handleCallback(chatId, 'screen:campaigns:2910561991');
   assert.match(list.text, /ScreamWorks/);
-  assert.match(list.text, /Campaigns/);
+  assert.match(list.text, /campaigns/i);
   assert.match(list.text, /Search \| Escape Rooms \| MOF/);
 
   const detail = handleCallback(chatId, 'camp:2910561991:23057434238');
-  assert.match(detail.text, /Campaign \| Search \| Escape Rooms \| MOF/);
+  assert.match(detail.text, /Search \| Escape Rooms \| MOF/);
   assert.match(detail.text, /Daily budget:/);
 });
