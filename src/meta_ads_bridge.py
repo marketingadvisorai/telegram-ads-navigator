@@ -27,14 +27,17 @@ def fetch(path, params):
 
 def list_accounts():
     obj = fetch('me/adaccounts', {
-        'fields': 'id,name,account_status,currency,timezone_name',
+        'fields': 'id,name,account_status,currency,timezone_name,business{id,name},owner,owner_business{name},end_advertiser_name,partner,name_with_location_descriptor',
         'limit': '100',
     })
     out = []
     for row in obj.get('data', []):
+        business_name = ((row.get('business') or {}).get('name') or (row.get('owner_business') or {}).get('name') or row.get('end_advertiser_name') or '')
+        account_name = row.get('name_with_location_descriptor') or row.get('name') or row['id']
         out.append({
             'id': row['id'].replace('act_', ''),
-            'name': row.get('name', row['id']),
+            'name': account_name,
+            'businessName': business_name,
             'platform': 'Meta Ads',
             'currency': row.get('currency', 'USD'),
             'status': row.get('account_status'),
@@ -46,7 +49,7 @@ def list_accounts():
 def account_summary(account_id):
     act_id = account_id if str(account_id).startswith('act_') else f'act_{account_id}'
     details = fetch(act_id, {
-        'fields': 'id,name,account_status,currency,timezone_name'
+        'fields': 'id,name,account_status,currency,timezone_name,business{id,name},owner_business{name},name_with_location_descriptor,end_advertiser_name'
     })
     insights = fetch(f'{act_id}/insights', {
         'fields': 'spend,impressions,clicks,cpc,ctr,actions',
@@ -54,14 +57,29 @@ def account_summary(account_id):
         'level': 'account',
         'limit': '1',
     })
+    campaigns_obj = fetch(f'{act_id}/campaigns', {
+        'fields': 'id,status,effective_status',
+        'limit': '100',
+    })
+    active = 0
+    paused = 0
+    for item in campaigns_obj.get('data', []):
+        status = (item.get('effective_status') or item.get('status') or '').upper()
+        if status == 'ACTIVE':
+            active += 1
+        elif status in {'PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED', 'AD_PAUSED'}:
+            paused += 1
     row = (insights.get('data') or [{}])[0]
     purchases = 0
     for action in row.get('actions', []):
         if action.get('action_type') in {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}:
             purchases = max(purchases, int(float(action.get('value', 0))))
+    business_name = ((details.get('business') or {}).get('name') or (details.get('owner_business') or {}).get('name') or details.get('end_advertiser_name') or '')
+    account_name = details.get('name_with_location_descriptor') or details.get('name') or account_id
     return {
         'id': details['id'].replace('act_', ''),
-        'name': details.get('name', account_id),
+        'name': account_name,
+        'businessName': business_name,
         'platform': 'Meta Ads',
         'currency': details.get('currency', 'USD'),
         'lastUpdated': None,
@@ -71,8 +89,8 @@ def account_summary(account_id):
             'conversions': purchases,
             'cpa': round((float(row.get('spend', 0) or 0) / purchases), 2) if purchases else 0,
             'ctr': round(float(row.get('ctr', 0) or 0), 2),
-            'activeCampaigns': 0,
-            'pausedCampaigns': 0,
+            'activeCampaigns': active,
+            'pausedCampaigns': paused,
         },
     }
 

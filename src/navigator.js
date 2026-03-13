@@ -82,7 +82,7 @@ function buildPickerScreen(chatId) {
     ].join('\n'),
     reply_markup: keyboard([
       [button('All', 'filter:all'), button('Google', 'filter:google'), button('Meta', 'filter:meta')],
-      ...items.map((account, index) => [button(`${index + 1}. ${platformIcon(account.platform)} ${clip(account.name, 30)}`, `pick:${account.id}`)]),
+      ...items.map((account, index) => [button(`${index + 1}. ${platformIcon(account.platform)} ${clip(account.businessName || account.name, 18)} | ${clip(account.name, 18)}`, `pick:${account.id}`)]),
     ]),
   };
 }
@@ -94,8 +94,9 @@ function buildAccountScreen(accountId) {
   const cpaTone = metricTone(account.summary.cpa, { goodHigh: false });
   return {
     text: [
-      `${platformIcon(account.platform)} ${account.name}`,
-      `${account.platform} | Last 30 days`,
+      `${platformIcon(account.platform)} ${account.businessName || account.name}`,
+      `${account.name}`,
+      `${account.platform} | ID: ${account.id}`,
       '',
       `💰 Spend: ${formatMoney(account.summary.spend, account.currency)}`,
       `👆 Clicks: ${account.summary.clicks}`,
@@ -117,7 +118,8 @@ function buildAccountScreen(accountId) {
 
 function buildCampaignCards(account, campaigns) {
   return [
-    `📋 ${account.name}`,
+    `📋 ${account.businessName || account.name}`,
+    `${account.name}`,
     `${account.platform} campaigns | Last 30 days`,
     'View: Cards',
     '',
@@ -129,7 +131,8 @@ function buildCampaignCards(account, campaigns) {
 
 function buildCampaignTable(account, campaigns) {
   const lines = [
-    `📊 ${account.name}`,
+    `📊 ${account.businessName || account.name}`,
+    `${account.name}`,
     `${account.platform} campaigns | Table`,
     '',
     '```',
@@ -206,7 +209,8 @@ function buildCampaignDetailScreen(accountId, campaignId) {
   return {
     text: [
       `🎯 ${campaign.name}`,
-      `${account.platform} | Last 30 days`,
+      `${account.businessName || account.name}`,
+      `${account.platform} | ${account.id}`,
       '',
       `Status: ${campaign.status}`,
       `Type: ${campaign.type}`,

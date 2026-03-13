@@ -26,6 +26,7 @@ def list_accounts():
         accounts.append({
             'id': account_id,
             'name': account.get('name', account_id),
+            'businessName': account.get('name', account_id),
             'platform': 'Google Ads',
             'currency': account.get('currency', ''),
             'location': account.get('location', ''),
@@ -84,6 +85,7 @@ def account_summary(customer_id: str):
     return {
         'id': str(row.customer.id),
         'name': row.customer.descriptive_name or customer_id,
+        'businessName': row.customer.descriptive_name or customer_id,
         'platform': 'Google Ads',
         'currency': row.customer.currency_code,
         'lastUpdated': None,
