@@ -57,9 +57,9 @@ async function handleUpdate(update) {
   if (update.callback_query?.data) {
     const chatId = update.callback_query.message.chat.id;
     const messageId = update.callback_query.message.message_id;
+    await answerCallbackQuery(update.callback_query.id);
     const screen = handleCallback(chatId, update.callback_query.data);
     await editScreen(chatId, messageId, screen);
-    await answerCallbackQuery(update.callback_query.id);
   }
 }
 
