@@ -10,14 +10,14 @@ function printStep(title, screen) {
   console.log(JSON.stringify(screen.reply_markup));
 }
 
-const picker = openAds(chatId);
+const picker = await openAds(chatId);
 printStep('/ads account picker', picker);
 
-const summary = handleCallback(chatId, 'pick:2910561991');
+const summary = await handleCallback(chatId, 'pick:google:2910561991');
 printStep('account summary', summary);
 
-const campaignList = handleCallback(chatId, 'screen:campaigns:2910561991');
+const campaignList = await handleCallback(chatId, 'screen:campaigns:google:2910561991');
 printStep('campaign list', campaignList);
 
-const campaignDetail = handleCallback(chatId, 'camp:2910561991:23057434238');
+const campaignDetail = await handleCallback(chatId, 'camp:google:2910561991:23057434238');
 printStep('campaign detail', campaignDetail);

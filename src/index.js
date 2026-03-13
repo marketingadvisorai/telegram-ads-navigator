@@ -1,5 +1,6 @@
-import { handleCallback, openAds } from './navigator.js';
+import { handleCallback, openAds, getActionType } from './navigator.js';
 import { telegramApi } from './telegram-api.js';
+import { createProgressScreen, runProgressSteps } from './progress.js';
 
 const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -49,27 +50,71 @@ async function answerCallbackQuery(callbackQueryId) {
   }
 }
 
+function buildFriendlyErrorScreen() {
+  return {
+    text: [
+      '⚠️ Could not load this view',
+      '',
+      'The data source took too long or replied unexpectedly.',
+      'Nothing changed in the ad account.',
+      '',
+      'Please try refresh in a moment.',
+    ].join('\n'),
+    reply_markup: {
+      inline_keyboard: [[{ text: '🏠 Home', callback_data: 'screen:picker' }]],
+    },
+  };
+}
+
+async function handleOpenCommand(chatId, filter) {
+  const loadingMessage = await sendScreen(chatId, createProgressScreen('open', 0, 'noop'));
+  try {
+    await runProgressSteps({
+      action: 'open',
+      callbackData: 'noop',
+      onUpdate: (screen) => editScreen(chatId, loadingMessage.message_id, screen),
+    });
+    const screen = await openAds(chatId, filter);
+    await editScreen(chatId, loadingMessage.message_id, screen);
+  } catch (error) {
+    console.error(error);
+    await editScreen(chatId, loadingMessage.message_id, buildFriendlyErrorScreen());
+  }
+}
+
 async function handleUpdate(update) {
   const text = update.message?.text?.trim();
   if (text === '/ads') {
-    await sendScreen(update.message.chat.id, openAds(update.message.chat.id, 'all'));
+    await handleOpenCommand(update.message.chat.id, 'all');
     return;
   }
   if (text === '/gads') {
-    await sendScreen(update.message.chat.id, openAds(update.message.chat.id, 'google'));
+    await handleOpenCommand(update.message.chat.id, 'google');
     return;
   }
   if (text === '/metaads') {
-    await sendScreen(update.message.chat.id, openAds(update.message.chat.id, 'meta'));
+    await handleOpenCommand(update.message.chat.id, 'meta');
     return;
   }
 
   if (update.callback_query?.data) {
     const chatId = update.callback_query.message.chat.id;
     const messageId = update.callback_query.message.message_id;
+    const callbackData = update.callback_query.data;
     await answerCallbackQuery(update.callback_query.id);
-    const screen = handleCallback(chatId, update.callback_query.data);
-    await editScreen(chatId, messageId, screen);
+
+    try {
+      await runProgressSteps({
+        action: getActionType(callbackData),
+        callbackData,
+        onUpdate: (screen) => editScreen(chatId, messageId, screen),
+      });
+      const screen = await handleCallback(chatId, callbackData);
+      await editScreen(chatId, messageId, screen);
+    } catch (error) {
+      console.error(error);
+      await editScreen(chatId, messageId, buildFriendlyErrorScreen());
+    }
   }
 }
 
