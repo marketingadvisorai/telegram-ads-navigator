@@ -19,16 +19,32 @@ async function sendScreen(chatId, screen) {
 }
 
 async function editScreen(chatId, messageId, screen) {
-  return telegramApi('editMessageText', {
-    chat_id: chatId,
-    message_id: messageId,
-    text: screen.text,
-    reply_markup: screen.reply_markup,
-  }, botToken);
+  try {
+    return await telegramApi('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text: screen.text,
+      reply_markup: screen.reply_markup,
+    }, botToken);
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (message.includes('message is not modified')) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function answerCallbackQuery(callbackQueryId) {
-  return telegramApi('answerCallbackQuery', { callback_query_id: callbackQueryId }, botToken);
+  try {
+    return await telegramApi('answerCallbackQuery', { callback_query_id: callbackQueryId }, botToken);
+  } catch (error) {
+    const message = String(error?.message || '');
+    if (message.includes('query is too old') || message.includes('query ID is invalid')) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function handleUpdate(update) {
