@@ -7,10 +7,10 @@ function formatMoney(amount, currency) {
   return `${symbol}${Number(amount).toFixed(amount % 1 === 0 ? 0 : 2)}`;
 }
 
-function formatUpdated(iso) {
-  if (!iso) return 'Live Google Ads API';
+function formatUpdated(iso, platform = 'API') {
+  if (!iso) return `Live ${platform}`;
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return 'Live Google Ads API';
+  if (Number.isNaN(date.getTime())) return `Live ${platform}`;
   return `${date.toISOString().replace('T', ' ').slice(0, 16)} UTC`;
 }
 
@@ -40,7 +40,7 @@ function buildPickerScreen() {
       'Pick an account to inspect.',
       'This MVP is read only.',
     ].join('\n'),
-    reply_markup: keyboard(items.map((account, index) => [button(`${index + 1}. ${account.name}`, `pick:${account.id}`)])),
+    reply_markup: keyboard(items.map((account, index) => [button(`${index + 1}. ${account.name} | ${account.platform}`, `pick:${account.id}`)])),
   };
 }
 
@@ -61,7 +61,7 @@ function buildAccountScreen(accountId) {
       `Active campaigns: ${account.summary.activeCampaigns}`,
       `Paused campaigns: ${account.summary.pausedCampaigns}`,
       '',
-      `Updated: ${formatUpdated(account.lastUpdated)}`,
+      `Updated: ${formatUpdated(account.lastUpdated, account.platform)}`,
     ].join('\n'),
     reply_markup: keyboard([
       [button('Campaigns', `screen:campaigns:${account.id}`)],
@@ -81,7 +81,7 @@ function buildCampaignListScreen(accountId) {
       '',
       ...activeCampaigns.map((campaign, index) => `${index + 1}. ${campaign.name}\nSpend ${formatMoney(campaign.spend, account.currency)} | Conv ${campaign.conversions} | CPA ${formatMoney(campaign.cpa, account.currency)}`),
       '',
-      `Updated: ${formatUpdated(account.lastUpdated)}`,
+      `Updated: ${formatUpdated(account.lastUpdated, account.platform)}`,
     ].join('\n'),
     reply_markup: keyboard([
       activeCampaigns.map((campaign, index) => button(String(index + 1), `camp:${account.id}:${campaign.id}`)),
@@ -111,7 +111,7 @@ function buildCampaignDetailScreen(accountId, campaignId) {
       `Bidding: ${campaign.bidding}`,
       `Daily budget: ${formatMoney(campaign.budgetDaily, account.currency)}`,
       '',
-      `Updated: ${formatUpdated(account.lastUpdated)}`,
+      `Updated: ${formatUpdated(account.lastUpdated, account.platform)}`,
     ].join('\n'),
     reply_markup: keyboard([
       [button('Back to campaigns', `screen:campaigns:${account.id}`)],
@@ -147,7 +147,7 @@ export function handleCallback(chatId, callbackData) {
   }
 
   if (callbackData.startsWith('pick:')) {
-    const accountId = callbackData.split(':')[1];
+    const accountId = callbackData.slice('pick:'.length);
     session.screen = 'account';
     session.accountId = accountId;
     session.campaignId = null;
@@ -156,20 +156,23 @@ export function handleCallback(chatId, callbackData) {
 
   if (callbackData.startsWith('screen:account:')) {
     session.screen = 'account';
-    session.accountId = callbackData.split(':')[2];
+    session.accountId = callbackData.slice('screen:account:'.length);
     session.campaignId = null;
     return renderScreen(chatId);
   }
 
   if (callbackData.startsWith('screen:campaigns:')) {
     session.screen = 'campaigns';
-    session.accountId = callbackData.split(':')[2];
+    session.accountId = callbackData.slice('screen:campaigns:'.length);
     session.campaignId = null;
     return renderScreen(chatId);
   }
 
   if (callbackData.startsWith('camp:')) {
-    const [, accountId, campaignId] = callbackData.split(':');
+    const rest = callbackData.slice('camp:'.length);
+    const lastColon = rest.lastIndexOf(':');
+    const accountId = rest.slice(0, lastColon);
+    const campaignId = rest.slice(lastColon + 1);
     session.screen = 'campaign';
     session.accountId = accountId;
     session.campaignId = campaignId;

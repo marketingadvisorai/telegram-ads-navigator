@@ -4,31 +4,12 @@ import path from 'node:path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const bridgePath = path.join(__dirname, 'google_ads_bridge.py');
+const googleBridgePath = path.join(__dirname, 'google_ads_bridge.py');
+const metaBridgePath = path.join(__dirname, 'meta_ads_bridge.py');
 const pythonPath = '/opt/openclaw/workspace/google-ads/.venv/bin/python';
 
-const fallbackAccounts = [
-  {
-    id: '2910561991',
-    name: 'ScreamWorks',
-    platform: 'Google Ads',
-    currency: 'GBP',
-    lastUpdated: '2026-03-13T09:55:00Z',
-    summary: {
-      spend: 3547,
-      clicks: 7340,
-      conversions: 96,
-      cpa: 36.95,
-      ctr: 8.1,
-      activeCampaigns: 6,
-      pausedCampaigns: 22,
-    },
-    campaigns: [],
-  },
-];
-
-function runBridge(args) {
-  const result = spawnSync(pythonPath, [bridgePath, ...args], {
+function runBridge(scriptPath, args) {
+  const result = spawnSync(pythonPath, [scriptPath, ...args], {
     encoding: 'utf8',
     env: { ...process.env, PYTHONUNBUFFERED: '1' },
   });
@@ -39,28 +20,27 @@ function runBridge(args) {
 }
 
 export function getAccounts() {
-  try {
-    return runBridge(['accounts']);
-  } catch {
-    return fallbackAccounts;
-  }
+  const google = runBridge(googleBridgePath, ['accounts']).map((a) => ({ ...a, id: `google:${a.id}`, source: 'google' }));
+  const meta = runBridge(metaBridgePath, ['accounts']).map((a) => ({ ...a, id: `meta:${a.id}`, source: 'meta' }));
+  return [...google, ...meta];
 }
 
 export function getAccount(accountId) {
-  try {
-    const summary = runBridge(['summary', accountId]);
-    const campaignList = runBridge(['campaigns', accountId]) || [];
-    return { ...summary, campaigns: campaignList };
-  } catch {
-    return fallbackAccounts.find((account) => account.id === accountId) || null;
+  const [source, rawId] = String(accountId).includes(':') ? String(accountId).split(':', 2) : ['google', String(accountId)];
+  if (source === 'meta') {
+    const summary = runBridge(metaBridgePath, ['summary', rawId]);
+    const campaignList = runBridge(metaBridgePath, ['campaigns', rawId]) || [];
+    return { ...summary, id: `meta:${rawId}`, campaigns: campaignList };
   }
+  const summary = runBridge(googleBridgePath, ['summary', rawId]);
+  const campaignList = runBridge(googleBridgePath, ['campaigns', rawId]) || [];
+  return { ...summary, id: `google:${rawId}`, campaigns: campaignList };
 }
 
 export function getCampaign(accountId, campaignId) {
-  try {
-    return runBridge(['campaign', accountId, campaignId]);
-  } catch {
-    const account = fallbackAccounts.find((item) => item.id === accountId);
-    return account?.campaigns?.find((campaign) => campaign.id === campaignId) || null;
+  const [source, rawId] = String(accountId).includes(':') ? String(accountId).split(':', 2) : ['google', String(accountId)];
+  if (source === 'meta') {
+    return runBridge(metaBridgePath, ['campaign', rawId, campaignId]);
   }
+  return runBridge(googleBridgePath, ['campaign', rawId, campaignId]);
 }
