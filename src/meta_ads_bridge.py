@@ -22,22 +22,24 @@ def fetch(path, params):
     params['access_token'] = token
     url = 'https://graph.facebook.com/v22.0/' + path + '?' + urllib.parse.urlencode(params)
     out = subprocess.check_output(['curl', '-s', url], text=True)
-    return json.loads(out)
+    data = json.loads(out)
+    if 'error' in data:
+        raise RuntimeError(data['error'].get('message', 'Meta API error'))
+    return data
 
 
 def list_accounts():
     obj = fetch('me/adaccounts', {
-        'fields': 'id,name,account_status,currency,timezone_name,business{id,name},owner,owner_business{name},end_advertiser_name,partner,name_with_location_descriptor',
+        'fields': 'id,name,account_status,currency,timezone_name',
         'limit': '100',
     })
     out = []
     for row in obj.get('data', []):
-        business_name = ((row.get('business') or {}).get('name') or (row.get('owner_business') or {}).get('name') or row.get('end_advertiser_name') or '')
-        account_name = row.get('name_with_location_descriptor') or row.get('name') or row['id']
+        account_name = row.get('name') or row['id']
         out.append({
             'id': row['id'].replace('act_', ''),
             'name': account_name,
-            'businessName': business_name,
+            'businessName': account_name,
             'platform': 'Meta Ads',
             'currency': row.get('currency', 'USD'),
             'status': row.get('account_status'),
@@ -49,7 +51,7 @@ def list_accounts():
 def account_summary(account_id):
     act_id = account_id if str(account_id).startswith('act_') else f'act_{account_id}'
     details = fetch(act_id, {
-        'fields': 'id,name,account_status,currency,timezone_name,business{id,name},owner_business{name},name_with_location_descriptor,end_advertiser_name'
+        'fields': 'id,name,account_status,currency,timezone_name,business{id,name},owner_business{name},end_advertiser_name'
     })
     insights = fetch(f'{act_id}/insights', {
         'fields': 'spend,impressions,clicks,cpc,ctr,actions',
@@ -74,8 +76,8 @@ def account_summary(account_id):
     for action in row.get('actions', []):
         if action.get('action_type') in {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}:
             purchases = max(purchases, int(float(action.get('value', 0))))
-    business_name = ((details.get('business') or {}).get('name') or (details.get('owner_business') or {}).get('name') or details.get('end_advertiser_name') or '')
-    account_name = details.get('name_with_location_descriptor') or details.get('name') or account_id
+    business_name = ((details.get('business') or {}).get('name') or (details.get('owner_business') or {}).get('name') or details.get('end_advertiser_name') or details.get('name') or account_id)
+    account_name = details.get('name') or account_id
     return {
         'id': details['id'].replace('act_', ''),
         'name': account_name,
