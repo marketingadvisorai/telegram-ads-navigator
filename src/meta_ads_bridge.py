@@ -110,7 +110,7 @@ def campaign_detail(account_id, campaign_id):
 
 def adsets(account_id, campaign_id):
     act_id = account_id if str(account_id).startswith('act_') else f'act_{account_id}'
-    obj = fetch(f'{campaign_id}/adsets', {'fields': 'id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,billing_event', 'limit': '20'})
+    obj = fetch(f'{act_id}/adsets', {'fields': 'id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,billing_event,campaign_id', 'filtering': json.dumps([{'field':'campaign.id','operator':'EQUAL','value': campaign_id}]), 'limit': '20'})
     insights = fetch(f'{act_id}/insights', {'fields': 'adset_id,adset_name,spend,clicks,cpc,ctr,actions', 'date_preset': 'last_30d', 'level': 'adset', 'filtering': json.dumps([{'field':'campaign.id','operator':'EQUAL','value': campaign_id}]), 'limit': '100'})
     metrics = {}
     for row in insights.get('data', []):
@@ -129,8 +129,8 @@ def adsets(account_id, campaign_id):
 
 
 def ads(account_id, campaign_id):
-    obj = fetch(f'{campaign_id}/ads', {'fields': 'id,name,effective_status', 'limit': '20'})
     act_id = account_id if str(account_id).startswith('act_') else f'act_{account_id}'
+    obj = fetch(f'{act_id}/ads', {'fields': 'id,name,effective_status,campaign_id', 'filtering': json.dumps([{'field':'campaign.id','operator':'EQUAL','value': campaign_id}]), 'limit': '20'})
     insights = fetch(f'{act_id}/insights', {'fields': 'ad_id,ad_name,spend,clicks,cpc,ctr,actions', 'date_preset': 'last_30d', 'level': 'ad', 'filtering': json.dumps([{'field':'campaign.id','operator':'EQUAL','value': campaign_id}]), 'limit': '100'})
     metrics = {}
     for row in insights.get('data', []):
