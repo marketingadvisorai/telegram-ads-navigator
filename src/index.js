@@ -38,9 +38,14 @@ async function editScreen(chatId, messageId, screen) {
   }
 }
 
-async function answerCallbackQuery(callbackQueryId) {
+async function answerCallbackQuery(callbackQueryId, text = 'Opening…') {
   try {
-    return await telegramApi('answerCallbackQuery', { callback_query_id: callbackQueryId }, botToken);
+    return await telegramApi('answerCallbackQuery', {
+      callback_query_id: callbackQueryId,
+      text,
+      show_alert: false,
+      cache_time: 0,
+    }, botToken);
   } catch (error) {
     const message = String(error?.message || '');
     if (message.includes('query is too old') || message.includes('query ID is invalid')) {
@@ -101,7 +106,7 @@ async function handleUpdate(update) {
     const chatId = update.callback_query.message.chat.id;
     const messageId = update.callback_query.message.message_id;
     const callbackData = update.callback_query.data;
-    await answerCallbackQuery(update.callback_query.id);
+    await answerCallbackQuery(update.callback_query.id, 'Loading view…');
 
     try {
       await runProgressSteps({
