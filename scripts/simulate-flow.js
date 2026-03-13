@@ -13,11 +13,11 @@ function printStep(title, screen) {
 const picker = openAds(chatId);
 printStep('/ads account picker', picker);
 
-const summary = handleCallback(chatId, 'pick:acc_1');
+const summary = handleCallback(chatId, 'pick:2910561991');
 printStep('account summary', summary);
 
-const campaignList = handleCallback(chatId, 'screen:campaigns:acc_1');
+const campaignList = handleCallback(chatId, 'screen:campaigns:2910561991');
 printStep('campaign list', campaignList);
 
-const campaignDetail = handleCallback(chatId, 'camp:acc_1:camp_1');
+const campaignDetail = handleCallback(chatId, 'camp:2910561991:23057434238');
 printStep('campaign detail', campaignDetail);

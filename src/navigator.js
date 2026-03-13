@@ -8,7 +8,9 @@ function formatMoney(amount, currency) {
 }
 
 function formatUpdated(iso) {
+  if (!iso) return 'Live Google Ads API';
   const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Live Google Ads API';
   return `${date.toISOString().replace('T', ' ').slice(0, 16)} UTC`;
 }
 

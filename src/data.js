@@ -1,6 +1,15 @@
-export const accounts = [
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const bridgePath = path.join(__dirname, 'google_ads_bridge.py');
+const pythonPath = '/opt/openclaw/workspace/google-ads/.venv/bin/python';
+
+const fallbackAccounts = [
   {
-    id: 'acc_1',
+    id: '2910561991',
     name: 'ScreamWorks',
     platform: 'Google Ads',
     currency: 'GBP',
@@ -14,151 +23,44 @@ export const accounts = [
       activeCampaigns: 6,
       pausedCampaigns: 22,
     },
-    campaigns: [
-      {
-        id: 'camp_1',
-        name: 'Escape Rooms MOF',
-        status: 'Enabled',
-        type: 'Search',
-        budgetDaily: 35,
-        bidding: 'Maximize Conversions',
-        spend: 1035,
-        clicks: 1880,
-        conversions: 2,
-        cpa: 517.5,
-        ctr: 7.3,
-        avgCpc: 0.55,
-      },
-      {
-        id: 'camp_2',
-        name: 'Brand Search',
-        status: 'Enabled',
-        type: 'Search',
-        budgetDaily: 20,
-        bidding: 'Maximize Conversions',
-        spend: 410,
-        clicks: 920,
-        conversions: 22,
-        cpa: 18.64,
-        ctr: 11.4,
-        avgCpc: 0.45,
-      },
-      {
-        id: 'camp_3',
-        name: 'Generic Escape Room',
-        status: 'Enabled',
-        type: 'Search',
-        budgetDaily: 25,
-        bidding: 'Maximize Conversions',
-        spend: 629,
-        clicks: 1402,
-        conversions: 14,
-        cpa: 44.93,
-        ctr: 8.8,
-        avgCpc: 0.45,
-      },
-      {
-        id: 'camp_4',
-        name: 'Corporate Team Building',
-        status: 'Enabled',
-        type: 'Search',
-        budgetDaily: 10,
-        bidding: 'Maximize Conversions',
-        spend: 48,
-        clicks: 112,
-        conversions: 3,
-        cpa: 16,
-        ctr: 9.2,
-        avgCpc: 0.43,
-      },
-      {
-        id: 'camp_5',
-        name: 'Events Campaign',
-        status: 'Enabled',
-        type: 'Search',
-        budgetDaily: 8,
-        bidding: 'Maximize Conversions',
-        spend: 32,
-        clicks: 61,
-        conversions: 1,
-        cpa: 32,
-        ctr: 6.6,
-        avgCpc: 0.52,
-      },
-      {
-        id: 'camp_6',
-        name: 'Birthday Parties',
-        status: 'Paused',
-        type: 'Search',
-        budgetDaily: 12,
-        bidding: 'Maximize Conversions',
-        spend: 18,
-        clicks: 39,
-        conversions: 1,
-        cpa: 18,
-        ctr: 5.1,
-        avgCpc: 0.46,
-      },
-    ],
-  },
-  {
-    id: 'acc_2',
-    name: 'Eye Care Hawaii',
-    platform: 'Google Ads',
-    currency: 'USD',
-    lastUpdated: '2026-03-13T09:58:00Z',
-    summary: {
-      spend: 1280,
-      clicks: 2190,
-      conversions: 41,
-      cpa: 31.22,
-      ctr: 6.7,
-      activeCampaigns: 4,
-      pausedCampaigns: 9,
-    },
-    campaigns: [
-      {
-        id: 'camp_7',
-        name: 'Cataract Surgery',
-        status: 'Enabled',
-        type: 'Search',
-        budgetDaily: 45,
-        bidding: 'Maximize Conversions',
-        spend: 510,
-        clicks: 801,
-        conversions: 18,
-        cpa: 28.33,
-        ctr: 7.1,
-        avgCpc: 0.64,
-      },
-      {
-        id: 'camp_8',
-        name: 'LASIK',
-        status: 'Enabled',
-        type: 'Search',
-        budgetDaily: 40,
-        bidding: 'Maximize Conversions',
-        spend: 444,
-        clicks: 690,
-        conversions: 13,
-        cpa: 34.15,
-        ctr: 6.2,
-        avgCpc: 0.64,
-      },
-    ],
+    campaigns: [],
   },
 ];
 
+function runBridge(args) {
+  const result = spawnSync(pythonPath, [bridgePath, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONUNBUFFERED: '1' },
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || 'Bridge failed');
+  }
+  return JSON.parse(result.stdout || 'null');
+}
+
 export function getAccounts() {
-  return accounts;
+  try {
+    return runBridge(['accounts']);
+  } catch {
+    return fallbackAccounts;
+  }
 }
 
 export function getAccount(accountId) {
-  return accounts.find((account) => account.id === accountId) || null;
+  try {
+    const summary = runBridge(['summary', accountId]);
+    const campaignList = runBridge(['campaigns', accountId]) || [];
+    return { ...summary, campaigns: campaignList };
+  } catch {
+    return fallbackAccounts.find((account) => account.id === accountId) || null;
+  }
 }
 
 export function getCampaign(accountId, campaignId) {
-  const account = getAccount(accountId);
-  if (!account) return null;
-  return account.campaigns.find((campaign) => campaign.id === campaignId) || null;
+  try {
+    return runBridge(['campaign', accountId, campaignId]);
+  } catch {
+    const account = fallbackAccounts.find((item) => item.id === accountId);
+    return account?.campaigns?.find((campaign) => campaign.id === campaignId) || null;
+  }
 }
