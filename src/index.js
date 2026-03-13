@@ -15,6 +15,7 @@ async function sendScreen(chatId, screen) {
     chat_id: chatId,
     text: screen.text,
     reply_markup: screen.reply_markup,
+    parse_mode: screen.parse_mode,
   }, botToken);
 }
 
@@ -25,6 +26,7 @@ async function editScreen(chatId, messageId, screen) {
       message_id: messageId,
       text: screen.text,
       reply_markup: screen.reply_markup,
+      parse_mode: screen.parse_mode,
     }, botToken);
   } catch (error) {
     const message = String(error?.message || '');
@@ -48,9 +50,17 @@ async function answerCallbackQuery(callbackQueryId) {
 }
 
 async function handleUpdate(update) {
-  if (update.message?.text?.trim() === '/ads') {
-    const screen = openAds(update.message.chat.id);
-    await sendScreen(update.message.chat.id, screen);
+  const text = update.message?.text?.trim();
+  if (text === '/ads') {
+    await sendScreen(update.message.chat.id, openAds(update.message.chat.id, 'all'));
+    return;
+  }
+  if (text === '/gads') {
+    await sendScreen(update.message.chat.id, openAds(update.message.chat.id, 'google'));
+    return;
+  }
+  if (text === '/metaads') {
+    await sendScreen(update.message.chat.id, openAds(update.message.chat.id, 'meta'));
     return;
   }
 
@@ -78,5 +88,5 @@ async function poll() {
   }
 }
 
-console.log('Telegram Ads Navigator MVP is running. Send /ads to the bot.');
+console.log('Telegram Ads Navigator MVP is running. Send /ads, /gads, or /metaads to the bot.');
 poll();

@@ -58,19 +58,21 @@ function clip(text, max) {
 function getSession(chatId) {
   let session = sessionStore.get(chatId);
   if (!session) {
-    session = { screen: 'picker', accountId: null, campaignId: null, campaignsView: 'cards' };
+    session = { screen: 'picker', accountId: null, campaignId: null, campaignsView: 'cards', filter: 'all' };
     sessionStore.set(chatId, session);
   }
   return session;
 }
 
-function buildPickerScreen() {
-  const items = getAccounts().slice(0, 20);
-  const googleCount = items.filter((a) => a.platform === 'Google Ads').length;
-  const metaCount = items.filter((a) => a.platform === 'Meta Ads').length;
+function buildPickerScreen(chatId) {
+  const session = getSession(chatId);
+  const items = getAccounts(session.filter).slice(0, 20);
+  const googleCount = getAccounts('google').length;
+  const metaCount = getAccounts('meta').length;
+  const title = session.filter === 'google' ? '🔎 Google Ads Navigator' : session.filter === 'meta' ? '📘 Meta Ads Navigator' : '✨ Ads Navigator';
   return {
     text: [
-      '✨ Ads Navigator',
+      title,
       '',
       'Choose an account to inspect.',
       'Read only mode is on.',
@@ -78,13 +80,16 @@ function buildPickerScreen() {
       `Google: ${googleCount} | Meta: ${metaCount}`,
       `Showing: ${items.length} accounts`,
     ].join('\n'),
-    reply_markup: keyboard(items.map((account, index) => [button(`${index + 1}. ${platformIcon(account.platform)} ${clip(account.name, 30)}`, `pick:${account.id}`)])),
+    reply_markup: keyboard([
+      [button('All', 'filter:all'), button('Google', 'filter:google'), button('Meta', 'filter:meta')],
+      ...items.map((account, index) => [button(`${index + 1}. ${platformIcon(account.platform)} ${clip(account.name, 30)}`, `pick:${account.id}`)]),
+    ]),
   };
 }
 
 function buildAccountScreen(accountId) {
   const account = getAccount(accountId);
-  if (!account) return buildPickerScreen();
+  if (!account) return buildPickerScreen(0);
   const convTone = metricTone(account.summary.conversions, { goodHigh: true });
   const cpaTone = metricTone(account.summary.cpa, { goodHigh: false });
   return {
@@ -140,13 +145,12 @@ function buildCampaignTable(account, campaigns) {
 function buildCampaignListScreen(chatId, accountId) {
   const session = getSession(chatId);
   const account = getAccount(accountId);
-  if (!account) return buildPickerScreen();
+  if (!account) return buildPickerScreen(chatId);
   const campaigns = (account.campaigns || []).slice(0, 5);
-  const text = session.campaignsView === 'table'
-    ? buildCampaignTable(account, campaigns)
-    : buildCampaignCards(account, campaigns);
+  const text = session.campaignsView === 'table' ? buildCampaignTable(account, campaigns) : buildCampaignCards(account, campaigns);
   return {
     text,
+    parse_mode: session.campaignsView === 'table' ? 'Markdown' : undefined,
     reply_markup: keyboard([
       campaigns.map((campaign, index) => button(String(index + 1), `camp:${account.id}:${campaign.id}`)),
       [button(session.campaignsView === 'table' ? '🧾 Cards' : '📊 Table', `toggle:campaigns:${account.id}`), button('🔄 Refresh', `screen:campaigns:${account.id}`)],
@@ -186,6 +190,7 @@ function buildSearchTermsScreen(accountId, campaignId) {
   lines.push('```', '', `Updated: ${formatUpdated(account.lastUpdated, account.platform)}`);
   return {
     text: lines.join('\n'),
+    parse_mode: 'Markdown',
     reply_markup: keyboard([
       [button('🔄 Refresh', `terms:${account.id}:${campaign.id}`)],
       [button('◀️ Campaign', `camp:${account.id}:${campaign.id}`), button('📋 Campaigns', `screen:campaigns:${account.id}`)],
@@ -232,15 +237,16 @@ export function renderScreen(chatId) {
   if (session.screen === 'campaigns' && session.accountId) return buildCampaignListScreen(chatId, session.accountId);
   if (session.screen === 'campaign' && session.accountId && session.campaignId) return buildCampaignDetailScreen(session.accountId, session.campaignId);
   if (session.screen === 'terms' && session.accountId && session.campaignId) return buildSearchTermsScreen(session.accountId, session.campaignId);
-  return buildPickerScreen();
+  return buildPickerScreen(chatId);
 }
 
-export function openAds(chatId) {
+export function openAds(chatId, filter = 'all') {
   const session = getSession(chatId);
   session.screen = 'picker';
   session.accountId = null;
   session.campaignId = null;
   session.campaignsView = 'cards';
+  session.filter = filter;
   return renderScreen(chatId);
 }
 
@@ -248,6 +254,13 @@ export function handleCallback(chatId, callbackData) {
   const session = getSession(chatId);
 
   if (callbackData === 'screen:picker') {
+    session.screen = 'picker';
+    session.accountId = null;
+    session.campaignId = null;
+    return renderScreen(chatId);
+  }
+  if (callbackData.startsWith('filter:')) {
+    session.filter = callbackData.slice('filter:'.length);
     session.screen = 'picker';
     session.accountId = null;
     session.campaignId = null;

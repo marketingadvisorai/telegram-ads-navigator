@@ -19,9 +19,11 @@ function runBridge(scriptPath, args) {
   return JSON.parse(result.stdout || 'null');
 }
 
-export function getAccounts() {
+export function getAccounts(filter = 'all') {
   const google = runBridge(googleBridgePath, ['accounts']).map((a) => ({ ...a, id: `google:${a.id}`, source: 'google' }));
   const meta = runBridge(metaBridgePath, ['accounts']).map((a) => ({ ...a, id: `meta:${a.id}`, source: 'meta' }));
+  if (filter === 'google') return google;
+  if (filter === 'meta') return meta;
   return [...google, ...meta];
 }
 
