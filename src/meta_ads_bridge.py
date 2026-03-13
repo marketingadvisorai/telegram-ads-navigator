@@ -43,7 +43,7 @@ def list_accounts():
 
 def account_summary(account_id):
     act_id = account_id if str(account_id).startswith('act_') else f'act_{account_id}'
-    details = fetch(act_id, {'fields': 'id,name,account_status,currency,timezone_name,business{id,name},owner_business{name},end_advertiser_name'})
+    details = fetch(act_id, {'fields': 'id,name,account_status,currency,timezone_name,business{id,name},end_advertiser_name'})
     insights = fetch(f'{act_id}/insights', {'fields': 'spend,impressions,clicks,cpc,ctr,actions', 'date_preset': 'last_30d', 'level': 'account', 'limit': '1'})
     campaigns_obj = fetch(f'{act_id}/campaigns', {'fields': 'id,status,effective_status', 'limit': '100'})
     active = 0
@@ -57,7 +57,7 @@ def account_summary(account_id):
     for action in row.get('actions', []):
         if action.get('action_type') in {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}:
             purchases = max(purchases, int(float(action.get('value', 0))))
-    business_name = ((details.get('business') or {}).get('name') or (details.get('owner_business') or {}).get('name') or details.get('end_advertiser_name') or details.get('name') or account_id)
+    business_name = ((details.get('business') or {}).get('name') or details.get('end_advertiser_name') or details.get('name') or account_id)
     account_name = details.get('name') or account_id
     return {
         'id': details['id'].replace('act_', ''),
@@ -108,14 +108,51 @@ def campaign_detail(account_id, campaign_id):
     return None
 
 
+def adsets(account_id, campaign_id):
+    act_id = account_id if str(account_id).startswith('act_') else f'act_{account_id}'
+    obj = fetch(f'{campaign_id}/adsets', {'fields': 'id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,billing_event', 'limit': '20'})
+    insights = fetch(f'{act_id}/insights', {'fields': 'adset_id,adset_name,spend,clicks,cpc,ctr,actions', 'date_preset': 'last_30d', 'level': 'adset', 'filtering': json.dumps([{'field':'campaign.id','operator':'EQUAL','value': campaign_id}]), 'limit': '100'})
+    metrics = {}
+    for row in insights.get('data', []):
+        purchases = 0
+        for action in row.get('actions', []):
+            if action.get('action_type') in {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}:
+                purchases = max(purchases, int(float(action.get('value', 0))))
+        metrics[row.get('adset_id')] = {'spend': round(float(row.get('spend', 0) or 0), 2), 'clicks': int(float(row.get('clicks', 0) or 0)), 'conversions': purchases, 'ctr': round(float(row.get('ctr', 0) or 0), 2), 'avgCpc': round(float(row.get('cpc', 0) or 0), 2)}
+    out = []
+    for row in obj.get('data', []):
+        m = metrics.get(row['id'], {})
+        budget = round((float(row.get('daily_budget') or row.get('lifetime_budget') or 0) / 100), 2) if (row.get('daily_budget') or row.get('lifetime_budget')) else 0
+        out.append({'id': row['id'], 'name': row.get('name', row['id']), 'status': row.get('effective_status', 'UNKNOWN').title(), 'budgetDaily': budget, 'bidding': row.get('optimization_goal', 'Unknown').replace('_', ' ').title(), 'spend': m.get('spend', 0), 'clicks': m.get('clicks', 0), 'conversions': m.get('conversions', 0), 'cpa': round(m.get('spend', 0) / m.get('conversions', 0), 2) if m.get('conversions', 0) else 0, 'ctr': m.get('ctr', 0), 'avgCpc': m.get('avgCpc', 0)})
+    out.sort(key=lambda x: x['spend'], reverse=True)
+    return out
+
+
+def ads(account_id, campaign_id):
+    obj = fetch(f'{campaign_id}/ads', {'fields': 'id,name,effective_status', 'limit': '20'})
+    act_id = account_id if str(account_id).startswith('act_') else f'act_{account_id}'
+    insights = fetch(f'{act_id}/insights', {'fields': 'ad_id,ad_name,spend,clicks,cpc,ctr,actions', 'date_preset': 'last_30d', 'level': 'ad', 'filtering': json.dumps([{'field':'campaign.id','operator':'EQUAL','value': campaign_id}]), 'limit': '100'})
+    metrics = {}
+    for row in insights.get('data', []):
+        purchases = 0
+        for action in row.get('actions', []):
+            if action.get('action_type') in {'purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase'}:
+                purchases = max(purchases, int(float(action.get('value', 0))))
+        metrics[row.get('ad_id')] = {'spend': round(float(row.get('spend', 0) or 0), 2), 'clicks': int(float(row.get('clicks', 0) or 0)), 'conversions': purchases, 'ctr': round(float(row.get('ctr', 0) or 0), 2), 'avgCpc': round(float(row.get('cpc', 0) or 0), 2)}
+    out = []
+    for row in obj.get('data', []):
+        m = metrics.get(row['id'], {})
+        out.append({'id': row['id'], 'name': row.get('name', row['id']), 'status': row.get('effective_status', 'UNKNOWN').title(), 'spend': m.get('spend', 0), 'clicks': m.get('clicks', 0), 'conversions': m.get('conversions', 0), 'cpa': round(m.get('spend', 0) / m.get('conversions', 0), 2) if m.get('conversions', 0) else 0, 'ctr': m.get('ctr', 0), 'avgCpc': m.get('avgCpc', 0)})
+    out.sort(key=lambda x: x['spend'], reverse=True)
+    return out
+
+
 def alerts(account_id):
     camps = campaigns(account_id)
     alerts = []
     for c in camps[:10]:
-        if c['spend'] >= 100 and c['conversions'] == 0:
-            alerts.append({'severity': 'high', 'text': f"{c['name']} spent {c['spend']} with 0 conversions"})
-        elif c['cpa'] and c['cpa'] > 50:
-            alerts.append({'severity': 'medium', 'text': f"{c['name']} CPA is high at {c['cpa']}"})
+        if c['spend'] >= 100 and c['conversions'] == 0: alerts.append({'severity': 'high', 'text': f"{c['name']} spent {c['spend']} with 0 conversions"})
+        elif c['cpa'] and c['cpa'] > 50: alerts.append({'severity': 'medium', 'text': f"{c['name']} CPA is high at {c['cpa']}"})
     return alerts[:8]
 
 
@@ -126,5 +163,7 @@ if __name__ == '__main__':
     elif cmd == 'summary': print(json.dumps(account_summary(sys.argv[2])))
     elif cmd == 'campaigns': print(json.dumps(campaigns(sys.argv[2])))
     elif cmd == 'campaign': print(json.dumps(campaign_detail(sys.argv[2], sys.argv[3])))
+    elif cmd == 'adsets': print(json.dumps(adsets(sys.argv[2], sys.argv[3])))
+    elif cmd == 'ads': print(json.dumps(ads(sys.argv[2], sys.argv[3])))
     elif cmd == 'alerts': print(json.dumps(alerts(sys.argv[2])))
     else: raise SystemExit(f'Unknown command: {cmd}')
