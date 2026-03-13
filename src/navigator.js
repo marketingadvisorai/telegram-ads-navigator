@@ -1,49 +1,482 @@
-import { getAccount, getAccounts, getCampaign, getSearchTerms, getConversionActions, getAlerts, getMetaAdsets, getMetaAds } from './data.js';
+import {
+  getAccount,
+  getAccounts,
+  getCampaign,
+  getSearchTerms,
+  getConversionActions,
+  getAlerts,
+  getMetaAdsets,
+  getMetaAds,
+} from './data.js';
 
 const sessionStore = new Map();
-const fm = (a,c) => `${c === 'GBP' ? '£' : c === 'USD' ? '$' : c+' '}${Number(a).toFixed(a % 1 === 0 ? 0 : 2)}`;
-const fu = (iso,p='API') => !iso ? `Live ${p}` : `${new Date(iso).toISOString().replace('T',' ').slice(0,16)} UTC`;
-const kb = (r) => ({ inline_keyboard:r }); const bt=(t,d)=>({text:t,callback_data:d});
-const pi=(p)=>p==='Google Ads'?'🔎':p==='Meta Ads'?'📘':'📊';
-const cl=(c)=> (c.conversions||0)>=10 && (c.cpa||0)>0 && c.cpa<=25 ? '🟢 strong' : (c.conversions||0)>=3 ? '🟡 mixed' : '🔴 watch';
-const pd=(v,w)=>{const t=String(v??''); return t.length>=w?t.slice(0,w):t+' '.repeat(w-t.length)}; const cp=(t,m)=>t.length<=m?t:`${t.slice(0,m-1)}…`;
-function gs(id){let s=sessionStore.get(id); if(!s){s={screen:'picker',accountId:null,campaignId:null,campaignsView:'cards',filter:'all'};sessionStore.set(id,s);} return s;}
+const kb = (rows) => ({ inline_keyboard: rows });
+const bt = (text, callbackData) => ({ text, callback_data: callbackData });
 
-async function picker(chatId){
-  const s=gs(chatId), [items, googleAccounts, metaAccounts] = await Promise.all([
-    getAccounts(s.filter),
-    getAccounts('google'),
-    getAccounts('meta'),
-  ]);
-  const visible = items.slice(0,20), gc=googleAccounts.length, mc=metaAccounts.length, title=s.filter==='google'?'🔎 Google Ads Navigator':s.filter==='meta'?'📘 Meta Ads Navigator':'✨ Ads Navigator';
-  return {text:[title,'','Choose an account to inspect.','Read only mode is on.','',`Google: ${gc} | Meta: ${mc}`,`Showing: ${visible.length} accounts`].join('\n'), reply_markup: kb([[bt('All','filter:all'),bt('Google','filter:google'),bt('Meta','filter:meta')], ...visible.map((a,i)=>[bt(`${i+1}. ${pi(a.platform)} ${cp(a.businessName||a.name,18)} | ${cp(a.name,18)}`,`pick:${a.id}`)])])};
+function getSession(chatId) {
+  let state = sessionStore.get(chatId);
+  if (!state) {
+    state = {
+      screen: 'picker',
+      accountId: null,
+      campaignId: null,
+      filter: 'all',
+    };
+    sessionStore.set(chatId, state);
+  }
+  return state;
 }
 
-async function account(accountId, chatId=0){
-  const a=await getAccount(accountId);
-  if(!a) return picker(chatId);
-  return {text:[`${pi(a.platform)} ${a.businessName||a.name}`,`${a.name}`,`${a.platform} | ID: ${a.id}`,'',`💰 Spend: ${fm(a.summary.spend,a.currency)}`,`👆 Clicks: ${a.summary.clicks}`,`🎯 Conversions: ${a.summary.conversions}`,`CPA: ${fm(a.summary.cpa,a.currency)}`,`📈 CTR: ${a.summary.ctr}%`,'',`🟢 Active campaigns: ${a.summary.activeCampaigns}`,`⏸️ Paused campaigns: ${a.summary.pausedCampaigns}`,'',`Updated: ${fu(a.lastUpdated,a.platform)}`].join('\n'), reply_markup: kb([[bt('📋 Campaigns',`screen:campaigns:${a.id}`),bt('🎯 Alerts',`alerts:${a.id}`)],[bt('⚙️ Conversions',`convs:${a.id}`),bt('🔄 Refresh',`screen:account:${a.id}`)],[bt('🏠 Home','screen:picker')]])};
+function normalizeAccountId(accountId) {
+  if (!accountId) return null;
+  const value = String(accountId);
+  if (value.includes(':')) return value;
+  return `google:${value}`;
 }
 
-function campCards(a,cs){return [`📋 ${a.businessName||a.name}`,`${a.name}`,`${a.platform} campaigns | Last 30 days`,'View: Cards','',...cs.map((c,i)=>`${i+1}. ${c.name}\n${cl(c)} | Spend ${fm(c.spend,a.currency)} | Conv ${c.conversions} | CPA ${fm(c.cpa,a.currency)}`),'',`Updated: ${fu(a.lastUpdated,a.platform)}`].join('\n');}
-function campTable(a,cs){const lines=[`📊 ${a.businessName||a.name}`,`${a.name}`,`${a.platform} campaigns | Table`,'','```',`${pd('#',2)} ${pd('Campaign',22)} ${pd('Spend',7)} ${pd('Conv',5)} ${pd('CPA',7)} ${pd('Flag',6)}`]; cs.forEach((c,i)=>lines.push(`${pd(i+1,2)} ${pd(cp(c.name,22),22)} ${pd(fm(c.spend,a.currency),7)} ${pd(c.conversions,5)} ${pd(fm(c.cpa,a.currency),7)} ${pd(cl(c).split(' ')[0],6)}`)); lines.push('```','',`Updated: ${fu(a.lastUpdated,a.platform)}`); return lines.join('\n');}
+function money(amount, currency = 'USD') {
+  const symbol = currency === 'GBP' ? '£' : currency === 'USD' ? '$' : `${currency} `;
+  const value = Number(amount || 0);
+  return `${symbol}${value.toFixed(value % 1 === 0 ? 0 : 2)}`;
+}
 
-async function campaigns(chatId,accountId){const s=gs(chatId), a=await getAccount(accountId); if(!a) return picker(chatId); const cs=(a.campaigns||[]).slice(0,5), text=s.campaignsView==='table'?campTable(a,cs):campCards(a,cs); return {text, parse_mode:s.campaignsView==='table'?'Markdown':undefined, reply_markup:kb([cs.map((c,i)=>bt(String(i+1),`camp:${a.id}:${c.id}`)),[bt(s.campaignsView==='table'?'🧾 Cards':'📊 Table',`toggle:campaigns:${a.id}`),bt('🔄 Refresh',`screen:campaigns:${a.id}`)],[bt('◀️ Back',`screen:account:${a.id}`),bt('🏠 Home','screen:picker')]])};}
+function fmtInt(value) {
+  return Number(value || 0).toLocaleString('en-GB');
+}
 
-async function terms(accountId,campaignId,chatId=0){const [a,c,ts]=await Promise.all([getAccount(accountId), getCampaign(accountId,campaignId), getSearchTerms(accountId,campaignId)]); const visible=(ts||[]).slice(0,8); if(!a||!c) return account(accountId, chatId); if(a.platform!=='Google Ads') return {text:['🔎 Search Terms','','Search terms are available only for Google Ads right now.','',`Campaign: ${c.name}`].join('\n'), reply_markup:kb([[bt('◀️ Back to campaign',`camp:${a.id}:${c.id}`)],[bt('🏠 Home','screen:picker')]])}; const lines=['🔎 Search Terms',c.name,'','```',`${pd('#',2)} ${pd('Term',26)} ${pd('Spend',7)} ${pd('Clk',4)} ${pd('Conv',5)}`]; (visible.length?visible:[{term:'No search term rows found.',spend:'',clicks:'',conversions:''}]).forEach((t,i)=>lines.push(`${pd(visible.length?i+1:'',2)} ${pd(cp(t.term,26),26)} ${pd(t.spend!==''?fm(t.spend,a.currency):'',7)} ${pd(t.clicks,4)} ${pd(t.conversions,5)}`)); lines.push('```','',`Updated: ${fu(a.lastUpdated,a.platform)}`); return {text:lines.join('\n'), parse_mode:'Markdown', reply_markup:kb([[bt('🔄 Refresh',`terms:${a.id}:${c.id}`)],[bt('◀️ Campaign',`camp:${a.id}:${c.id}`),bt('📋 Campaigns',`screen:campaigns:${a.id}`)],[bt('🏠 Home','screen:picker')]])};}
+function fmtPct(value) {
+  return `${Number(value || 0).toFixed(1)}%`;
+}
 
-async function convs(accountId, chatId=0){const [a, cs] = await Promise.all([getAccount(accountId), getConversionActions(accountId)]); if(!a) return picker(chatId); if(a.platform!=='Google Ads') return {text:['⚙️ Conversion Actions','','Detailed conversion actions are available only for Google Ads right now.'].join('\n'), reply_markup:kb([[bt('◀️ Back',`screen:account:${a.id}`)],[bt('🏠 Home','screen:picker')]])}; const visible=(cs||[]).slice(0,12), lines=['⚙️ Conversion Actions',`${a.businessName||a.name}`,'','```',`${pd('P',2)} ${pd('Type',10)} ${pd('Category',14)} Name`]; visible.forEach((c)=>lines.push(`${pd(c.primary?'Y':'N',2)} ${pd(cp(c.type,10),10)} ${pd(cp(c.category,14),14)} ${cp(c.name,28)}`)); lines.push('```','',`Updated: ${fu(a.lastUpdated,a.platform)}`); return {text:lines.join('\n'), parse_mode:'Markdown', reply_markup:kb([[bt('🔄 Refresh',`convs:${a.id}`)],[bt('◀️ Back',`screen:account:${a.id}`),bt('🏠 Home','screen:picker')]])};}
+function shorten(text, max) {
+  const value = String(text || '');
+  return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+}
 
-async function alerts(accountId, chatId=0){const [a, as] = await Promise.all([getAccount(accountId), getAlerts(accountId)]); if(!a) return picker(chatId); const icon=(s)=>s==='high'?'🔴':s==='medium'?'🟡':'🔵'; return {text:['🎯 Alerts',`${a.businessName||a.name}`,'',...((as||[]).length?(as||[]).map((x,i)=>`${i+1}. ${icon(x.severity)} ${x.text}`):['No major alerts found right now.']),'',`Updated: ${fu(a.lastUpdated,a.platform)}`].join('\n'), reply_markup:kb([[bt('🔄 Refresh',`alerts:${a.id}`)],[bt('◀️ Back',`screen:account:${a.id}`),bt('🏠 Home','screen:picker')]])};}
+function divider() {
+  return '━━━━━━━━━━━━';
+}
 
-async function metaAdsets(accountId,campaignId, chatId=0){const [a, c, sets] = await Promise.all([getAccount(accountId), getCampaign(accountId,campaignId), getMetaAdsets(accountId,campaignId)]); const visible=(sets||[]).slice(0,8); if(!a||!c) return account(accountId, chatId); const lines=['🧩 Ad Sets', c.name,'','```',`${pd('#',2)} ${pd('Ad Set',24)} ${pd('Spend',7)} ${pd('Conv',5)} ${pd('CPA',7)}`]; (visible.length?visible:[{name:'No ad sets found',spend:'',conversions:'',cpa:''}]).forEach((s,i)=>lines.push(`${pd(visible.length?i+1:'',2)} ${pd(cp(s.name,24),24)} ${pd(s.spend!==''?fm(s.spend,a.currency):'',7)} ${pd(s.conversions,5)} ${pd(s.cpa!==''?fm(s.cpa,a.currency):'',7)}`)); lines.push('```','',`Updated: ${fu(a.lastUpdated,a.platform)}`); return {text:lines.join('\n'), parse_mode:'Markdown', reply_markup:kb([[bt('📣 Ads',`mads:${a.id}:${c.id}`),bt('🔄 Refresh',`madsets:${a.id}:${c.id}`)],[bt('◀️ Campaign',`camp:${a.id}:${c.id}`),bt('🏠 Home','screen:picker')]])};}
+function updatedAt(iso, source = 'live') {
+  if (!iso) return `Updated: live | Source: ${source}`;
+  return `Updated: ${new Date(iso).toISOString().replace('T', ' ').slice(0, 16)} UTC | Source: ${source}`;
+}
 
-async function metaAds(accountId,campaignId, chatId=0){const [a, c, ads] = await Promise.all([getAccount(accountId), getCampaign(accountId,campaignId), getMetaAds(accountId,campaignId)]); const visible=(ads||[]).slice(0,8); if(!a||!c) return account(accountId, chatId); const lines=['📣 Ads', c.name,'','```',`${pd('#',2)} ${pd('Ad',24)} ${pd('Spend',7)} ${pd('Conv',5)} ${pd('CPA',7)}`]; (visible.length?visible:[{name:'No ads found',spend:'',conversions:'',cpa:''}]).forEach((s,i)=>lines.push(`${pd(visible.length?i+1:'',2)} ${pd(cp(s.name,24),24)} ${pd(s.spend!==''?fm(s.spend,a.currency):'',7)} ${pd(s.conversions,5)} ${pd(s.cpa!==''?fm(s.cpa,a.currency):'',7)}`)); lines.push('```','',`Updated: ${fu(a.lastUpdated,a.platform)}`); return {text:lines.join('\n'), parse_mode:'Markdown', reply_markup:kb([[bt('🧩 Ad Sets',`madsets:${a.id}:${c.id}`),bt('🔄 Refresh',`mads:${a.id}:${c.id}`)],[bt('◀️ Campaign',`camp:${a.id}:${c.id}`),bt('🏠 Home','screen:picker')]])};}
+function statusDot(status = '') {
+  const value = String(status).toLowerCase();
+  if (value.includes('enable') || value.includes('active')) return '🟢';
+  if (value.includes('pause')) return '🟡';
+  if (value.includes('end') || value.includes('remove') || value.includes('archive')) return '⚫';
+  return '⚪';
+}
 
-async function campaign(accountId,campaignId, chatId=0){const [a, c] = await Promise.all([getAccount(accountId), getCampaign(accountId,campaignId)]); if(!a||!c) return account(accountId, chatId); const metaRow = a.platform==='Meta Ads' ? [bt('🧩 Ad Sets',`madsets:${a.id}:${c.id}`), bt('📣 Ads',`mads:${a.id}:${c.id}`)] : [bt('🔎 Search Terms',`terms:${a.id}:${c.id}`), bt('🔄 Refresh',`camp:${a.id}:${c.id}`)]; return {text:[`🎯 ${c.name}`,`${a.businessName||a.name}`,`${a.platform} | ${a.id}`,'',`Status: ${c.status}`,`Type: ${c.type}`,`Bidding: ${c.bidding}`,'',`💰 Spend: ${fm(c.spend,a.currency)}`,`👆 Clicks: ${c.clicks}`,`🎯 Conversions: ${c.conversions}`,`CPA: ${fm(c.cpa,a.currency)}`,`CTR: ${c.ctr}%`,`Avg CPC: ${fm(c.avgCpc,a.currency)}`,`Daily budget: ${fm(c.budgetDaily,a.currency)}`,'',`Assessment: ${cl(c)}`,`Updated: ${fu(a.lastUpdated,a.platform)}`].join('\n'), reply_markup:kb([metaRow,[bt('📋 Campaigns',`screen:campaigns:${a.id}`),bt('◀️ Account',`screen:account:${a.id}`)],[bt('🏠 Home','screen:picker')]])};}
+function severityDot(level = '') {
+  const value = String(level).toLowerCase();
+  if (value === 'high' || value === 'critical') return '🔴';
+  if (value === 'medium' || value === 'warning') return '🟡';
+  return '🔵';
+}
 
-export async function renderScreen(chatId){const s=gs(chatId); if(s.screen==='account'&&s.accountId) return account(s.accountId, chatId); if(s.screen==='campaigns'&&s.accountId) return campaigns(chatId,s.accountId); if(s.screen==='campaign'&&s.accountId&&s.campaignId) return campaign(s.accountId,s.campaignId, chatId); if(s.screen==='terms'&&s.accountId&&s.campaignId) return terms(s.accountId,s.campaignId, chatId); if(s.screen==='convs'&&s.accountId) return convs(s.accountId, chatId); if(s.screen==='alerts'&&s.accountId) return alerts(s.accountId, chatId); if(s.screen==='madsets'&&s.accountId&&s.campaignId) return metaAdsets(s.accountId,s.campaignId, chatId); if(s.screen==='mads'&&s.accountId&&s.campaignId) return metaAds(s.accountId,s.campaignId, chatId); return picker(chatId);}
-export async function openAds(chatId,filter='all'){const s=gs(chatId); s.screen='picker'; s.accountId=null; s.campaignId=null; s.campaignsView='cards'; s.filter=filter; return renderScreen(chatId);}
-export function getActionType(d){ if(!d || d==='screen:picker' || d.startsWith('filter:')) return 'picker'; if(d.startsWith('pick:') || d.startsWith('screen:account:')) return 'account'; if(d.startsWith('screen:campaigns:') || d.startsWith('toggle:campaigns:')) return 'campaigns'; if(d.startsWith('camp:')) return 'campaign'; if(d.startsWith('terms:')) return 'terms'; if(d.startsWith('convs:')) return 'convs'; if(d.startsWith('alerts:')) return 'alerts'; if(d.startsWith('madsets:')) return 'madsets'; if(d.startsWith('mads:')) return 'mads'; return 'account'; }
-export async function handleCallback(chatId,d){const s=gs(chatId); if(d==='screen:picker'){s.screen='picker'; s.accountId=null; s.campaignId=null; return renderScreen(chatId);} if(d.startsWith('filter:')){s.filter=d.slice(7); s.screen='picker'; s.accountId=null; s.campaignId=null; return renderScreen(chatId);} if(d.startsWith('pick:')){s.screen='account'; s.accountId=d.slice(5); s.campaignId=null; return renderScreen(chatId);} if(d.startsWith('screen:account:')){s.screen='account'; s.accountId=d.slice(15); s.campaignId=null; return renderScreen(chatId);} if(d.startsWith('screen:campaigns:')){s.screen='campaigns'; s.accountId=d.slice(17); s.campaignId=null; return renderScreen(chatId);} if(d.startsWith('toggle:campaigns:')){s.screen='campaigns'; s.accountId=d.slice(17); s.campaignsView=s.campaignsView==='table'?'cards':'table'; return renderScreen(chatId);} if(d.startsWith('terms:')||d.startsWith('camp:')||d.startsWith('madsets:')||d.startsWith('mads:')){const prefix=d.startsWith('terms:')?'terms:':d.startsWith('camp:')?'camp:':d.startsWith('madsets:')?'madsets:':'mads:'; const rest=d.slice(prefix.length); const i=rest.lastIndexOf(':'); s.screen=prefix==='camp:'?'campaign':prefix.replace(':',''); s.accountId=rest.slice(0,i); s.campaignId=rest.slice(i+1); return renderScreen(chatId);} if(d.startsWith('convs:')){s.screen='convs'; s.accountId=d.slice(6); s.campaignId=null; return renderScreen(chatId);} if(d.startsWith('alerts:')){s.screen='alerts'; s.accountId=d.slice(7); s.campaignId=null; return renderScreen(chatId);} return renderScreen(chatId);}
-export function resetSessions(){sessionStore.clear();}
+function healthDot(item) {
+  const conversions = Number(item?.conversions || 0);
+  const cpa = Number(item?.cpa || 0);
+  const spend = Number(item?.spend || 0);
+
+  if (conversions >= 10 && cpa > 0 && cpa <= 25) return '🟢 strong';
+  if (conversions >= 3 || (spend > 0 && cpa > 0 && cpa <= 60)) return '🟡 mixed';
+  return '🔴 watch';
+}
+
+function findSiblingAccount(account, allAccounts) {
+  if (!account) return null;
+  const targetPlatform = account.platform === 'Google Ads' ? 'Meta Ads' : 'Google Ads';
+  const businessName = String(account.businessName || account.name || '').trim().toLowerCase();
+  const accountName = String(account.name || '').trim().toLowerCase();
+
+  return allAccounts.find((candidate) => {
+    if (candidate.platform !== targetPlatform) return false;
+    const candidateBusiness = String(candidate.businessName || candidate.name || '').trim().toLowerCase();
+    const candidateName = String(candidate.name || '').trim().toLowerCase();
+    return candidateBusiness === businessName || candidateName === businessName || candidateName === accountName;
+  }) || null;
+}
+
+async function renderPicker(chatId) {
+  const state = getSession(chatId);
+  const allAccounts = getAccounts('all');
+  const visibleAccounts = getAccounts(state.filter).slice(0, 20);
+  const googleCount = getAccounts('google').length;
+  const metaCount = getAccounts('meta').length;
+
+  const title = state.filter === 'google'
+    ? '🔎 Google Ads Navigator'
+    : state.filter === 'meta'
+      ? '📘 Meta Ads Navigator'
+      : '✨ Ads Navigator';
+
+  return {
+    text: [
+      title,
+      'Read only command center',
+      divider(),
+      'Choose an account to inspect.',
+      `Google accounts: ${googleCount}`,
+      `Meta accounts: ${metaCount}`,
+      '',
+      `Showing: ${visibleAccounts.length} of ${allAccounts.length} accounts`,
+    ].join('\n'),
+    reply_markup: kb([
+      [bt(state.filter === 'all' ? '• All' : 'All', 'filter:all'), bt(state.filter === 'google' ? '• Google' : 'Google', 'filter:google'), bt(state.filter === 'meta' ? '• Meta' : 'Meta', 'filter:meta')],
+      ...visibleAccounts.map((account, index) => [
+        bt(`${index + 1}. ${account.platform === 'Google Ads' ? '🔎' : '📘'} ${shorten(account.businessName || account.name, 26)}`, `pick:${account.id}`),
+      ]),
+    ]),
+  };
+}
+
+async function renderAccountSummary(accountId) {
+  const account = getAccount(accountId);
+  if (!account) return renderPicker(0);
+
+  const sibling = findSiblingAccount(account, getAccounts('all'));
+  const isGoogle = account.platform === 'Google Ads';
+
+  return {
+    text: [
+      `${isGoogle ? '🔎' : '📘'} ${account.businessName || account.name}`,
+      `${account.platform} summary`,
+      divider(),
+      `Spend: ${money(account.summary.spend, account.currency)}`,
+      `Clicks: ${fmtInt(account.summary.clicks)}`,
+      `${isGoogle ? 'Conversions' : 'Purchases'}: ${fmtInt(account.summary.conversions)}`,
+      `CPA: ${money(account.summary.cpa, account.currency)}`,
+      `CTR: ${fmtPct(account.summary.ctr)}`,
+      '',
+      'Quick view',
+      `${statusDot('active')} Active campaigns: ${fmtInt(account.summary.activeCampaigns)}`,
+      `${statusDot('paused')} Paused campaigns: ${fmtInt(account.summary.pausedCampaigns)}`,
+      '',
+      updatedAt(account.lastUpdated, 'live'),
+    ].join('\n'),
+    reply_markup: kb([
+      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Alerts', `alerts:${account.id}`)],
+      isGoogle
+        ? [bt('Conversions', `convs:${account.id}`), sibling ? bt('Meta overview', `screen:account:${sibling.id}`) : bt('Refresh', `screen:account:${account.id}`)]
+        : [sibling ? bt('Google summary', `screen:account:${sibling.id}`) : bt('Refresh', `screen:account:${account.id}`), bt('Refresh', `screen:account:${account.id}`)],
+      [bt('Home', 'screen:picker')],
+    ]),
+  };
+}
+
+async function renderCampaignList(accountId) {
+  const account = getAccount(accountId);
+  if (!account) return renderPicker(0);
+
+  const campaigns = (account.campaigns || []).slice(0, 5);
+  return {
+    text: [
+      `${account.platform === 'Google Ads' ? '📋' : '📘'} ${account.businessName || account.name}`,
+      `${account.platform} campaigns`,
+      divider(),
+      campaigns.length
+        ? campaigns.map((campaign, index) => [
+            `${index + 1}. ${statusDot(campaign.status)} ${shorten(campaign.name, 34)}`,
+            `   ${healthDot(campaign)}  |  Spend ${money(campaign.spend, account.currency)}  |  Conv ${fmtInt(campaign.conversions)}  |  CPA ${money(campaign.cpa, account.currency)}`,
+          ].join('\n')).join('\n\n')
+        : 'No campaign rows found.',
+      '',
+      updatedAt(account.lastUpdated, 'live'),
+    ].join('\n'),
+    reply_markup: kb([
+      campaigns.length ? campaigns.map((campaign, index) => bt(String(index + 1), `camp:${account.id}:${campaign.id}`)) : [bt('Account', `screen:account:${account.id}`)],
+      [bt('Refresh', `screen:campaigns:${account.id}`), bt('Account', `screen:account:${account.id}`)],
+      [bt('Home', 'screen:picker')],
+    ]),
+  };
+}
+
+async function renderCampaignDetail(accountId, campaignId) {
+  const account = getAccount(accountId);
+  const campaign = getCampaign(accountId, campaignId);
+  if (!account || !campaign) return renderAccountSummary(accountId);
+
+  const isMeta = account.platform === 'Meta Ads';
+  return {
+    text: [
+      `🎯 ${campaign.name}`,
+      `${account.businessName || account.name}`,
+      divider(),
+      `${statusDot(campaign.status)} Status: ${campaign.status}`,
+      `Channel: ${campaign.type}`,
+      `Strategy: ${campaign.bidding}`,
+      `Daily budget: ${money(campaign.budgetDaily, account.currency)}`,
+      '',
+      `Spend: ${money(campaign.spend, account.currency)}`,
+      `Clicks: ${fmtInt(campaign.clicks)}`,
+      `${isMeta ? 'Purchases' : 'Conversions'}: ${fmtInt(campaign.conversions)}`,
+      `CPA: ${money(campaign.cpa, account.currency)}`,
+      `CTR: ${fmtPct(campaign.ctr)}`,
+      `Avg CPC: ${money(campaign.avgCpc, account.currency)}`,
+      '',
+      `Assessment: ${healthDot(campaign)}`,
+      updatedAt(account.lastUpdated, 'live'),
+    ].join('\n'),
+    reply_markup: kb([
+      isMeta
+        ? [bt('Ad sets', `madsets:${account.id}:${campaign.id}`), bt('Ads', `mads:${account.id}:${campaign.id}`)]
+        : [bt('Search terms', `terms:${account.id}:${campaign.id}`), bt('Conversions', `convs:${account.id}`)],
+      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Account', `screen:account:${account.id}`)],
+      [bt('Home', 'screen:picker')],
+    ]),
+  };
+}
+
+async function renderSearchTerms(accountId, campaignId) {
+  const account = getAccount(accountId);
+  const campaign = getCampaign(accountId, campaignId);
+  if (!account || !campaign) return renderAccountSummary(accountId);
+
+  if (account.platform !== 'Google Ads') {
+    return {
+      text: ['🔎 Search terms', divider(), 'Search terms are available only for Google Ads.', '', `Campaign: ${campaign.name}`].join('\n'),
+      reply_markup: kb([[bt('Campaign', `camp:${account.id}:${campaign.id}`), bt('Home', 'screen:picker')]]),
+    };
+  }
+
+  const terms = getSearchTerms(accountId, campaignId).slice(0, 8);
+  const wasteCount = terms.filter((term) => Number(term.spend || 0) > 0 && Number(term.conversions || 0) === 0).length;
+
+  return {
+    text: [
+      '🔎 Search terms',
+      `${campaign.name}`,
+      divider(),
+      terms.length
+        ? terms.map((term, index) => [
+            `${index + 1}. ${shorten(term.term, 36)}`,
+            `   ${Number(term.conversions || 0) > 0 ? '🟢' : '🔴'} Spend ${money(term.spend, account.currency)}  |  Clicks ${fmtInt(term.clicks)}  |  Conv ${fmtInt(term.conversions)}`,
+          ].join('\n')).join('\n\n')
+        : 'No search term rows found for this range.',
+      '',
+      wasteCount ? `Watchouts: 🔴 ${wasteCount} visible terms have zero conversions` : 'Watchouts: 🟢 No major waste in the visible rows',
+      updatedAt(account.lastUpdated, 'live'),
+    ].join('\n'),
+    reply_markup: kb([
+      [bt('Refresh', `terms:${account.id}:${campaign.id}`), bt('Campaign', `camp:${account.id}:${campaign.id}`)],
+      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Home', 'screen:picker')],
+    ]),
+  };
+}
+
+async function renderConversions(accountId) {
+  const account = getAccount(accountId);
+  if (!account) return renderPicker(0);
+
+  if (account.platform !== 'Google Ads') {
+    return {
+      text: ['⚙️ Conversion actions', divider(), 'Detailed conversion actions are available only for Google Ads right now.'].join('\n'),
+      reply_markup: kb([[bt('Account', `screen:account:${account.id}`), bt('Home', 'screen:picker')]]),
+    };
+  }
+
+  const actions = getConversionActions(accountId).slice(0, 10);
+  const primaryCount = actions.filter((action) => action.primary).length;
+
+  return {
+    text: [
+      '⚙️ Conversion actions',
+      `${account.businessName || account.name}`,
+      divider(),
+      actions.length
+        ? actions.map((action, index) => `${index + 1}. ${shorten(action.name, 32)}\n   ${action.primary ? '🟢 primary' : '⚪ secondary'}  |  ${shorten(action.type, 12)}  |  ${shorten(action.category, 14)}`).join('\n\n')
+        : 'No conversion actions found.',
+      '',
+      `Audit: ${primaryCount > 5 ? '🟡' : '🟢'} ${primaryCount} visible actions are primary`,
+      updatedAt(account.lastUpdated, 'live'),
+    ].join('\n'),
+    reply_markup: kb([
+      [bt('Refresh', `convs:${account.id}`), bt('Account', `screen:account:${account.id}`)],
+      [bt('Home', 'screen:picker')],
+    ]),
+  };
+}
+
+async function renderAlerts(accountId) {
+  const account = getAccount(accountId);
+  if (!account) return renderPicker(0);
+
+  const alerts = getAlerts(accountId).slice(0, 8);
+  return {
+    text: [
+      '🚨 Alerts',
+      `${account.businessName || account.name}`,
+      divider(),
+      alerts.length ? alerts.map((alert, index) => `${index + 1}. ${severityDot(alert.severity)} ${alert.text}`).join('\n\n') : '🟢 No major alerts right now.',
+      '',
+      updatedAt(account.lastUpdated, 'computed'),
+    ].join('\n'),
+    reply_markup: kb([
+      [bt('Refresh', `alerts:${account.id}`), bt('Account', `screen:account:${account.id}`)],
+      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Home', 'screen:picker')],
+    ]),
+  };
+}
+
+async function renderMetaAdSets(accountId, campaignId) {
+  const account = getAccount(accountId);
+  const campaign = getCampaign(accountId, campaignId);
+  if (!account || !campaign) return renderAccountSummary(accountId);
+
+  const items = getMetaAdsets(accountId, campaignId).slice(0, 8);
+  return {
+    text: [
+      '🧩 Meta ad sets',
+      `${campaign.name}`,
+      divider(),
+      items.length
+        ? items.map((item, index) => [
+            `${index + 1}. ${statusDot(item.status)} ${shorten(item.name, 34)}`,
+            `   ${healthDot(item)}  |  Spend ${money(item.spend, account.currency)}  |  Conv ${fmtInt(item.conversions)}  |  CPA ${money(item.cpa, account.currency)}`,
+          ].join('\n')).join('\n\n')
+        : 'No ad sets found.',
+      '',
+      updatedAt(account.lastUpdated, 'live'),
+    ].join('\n'),
+    reply_markup: kb([
+      [bt('Ads', `mads:${account.id}:${campaign.id}`), bt('Campaign', `camp:${account.id}:${campaign.id}`)],
+      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Home', 'screen:picker')],
+    ]),
+  };
+}
+
+async function renderMetaAds(accountId, campaignId) {
+  const account = getAccount(accountId);
+  const campaign = getCampaign(accountId, campaignId);
+  if (!account || !campaign) return renderAccountSummary(accountId);
+
+  const items = getMetaAds(accountId, campaignId).slice(0, 8);
+  return {
+    text: [
+      '📣 Meta ads',
+      `${campaign.name}`,
+      divider(),
+      items.length
+        ? items.map((item, index) => [
+            `${index + 1}. ${statusDot(item.status)} ${shorten(item.name, 34)}`,
+            `   ${healthDot(item)}  |  Spend ${money(item.spend, account.currency)}  |  Conv ${fmtInt(item.conversions)}  |  CPA ${money(item.cpa, account.currency)}`,
+          ].join('\n')).join('\n\n')
+        : 'No ads found.',
+      '',
+      updatedAt(account.lastUpdated, 'live'),
+    ].join('\n'),
+    reply_markup: kb([
+      [bt('Ad sets', `madsets:${account.id}:${campaign.id}`), bt('Campaign', `camp:${account.id}:${campaign.id}`)],
+      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Home', 'screen:picker')],
+    ]),
+  };
+}
+
+export async function renderScreen(chatId) {
+  const state = getSession(chatId);
+  if (state.screen === 'account' && state.accountId) return renderAccountSummary(state.accountId);
+  if (state.screen === 'campaigns' && state.accountId) return renderCampaignList(state.accountId);
+  if (state.screen === 'campaign' && state.accountId && state.campaignId) return renderCampaignDetail(state.accountId, state.campaignId);
+  if (state.screen === 'terms' && state.accountId && state.campaignId) return renderSearchTerms(state.accountId, state.campaignId);
+  if (state.screen === 'convs' && state.accountId) return renderConversions(state.accountId);
+  if (state.screen === 'alerts' && state.accountId) return renderAlerts(state.accountId);
+  if (state.screen === 'madsets' && state.accountId && state.campaignId) return renderMetaAdSets(state.accountId, state.campaignId);
+  if (state.screen === 'mads' && state.accountId && state.campaignId) return renderMetaAds(state.accountId, state.campaignId);
+  return renderPicker(chatId);
+}
+
+export async function openAds(chatId, filter = 'all') {
+  const state = getSession(chatId);
+  state.screen = 'picker';
+  state.accountId = null;
+  state.campaignId = null;
+  state.filter = filter;
+  return renderScreen(chatId);
+}
+
+export function getActionType(data) {
+  if (!data || data === 'screen:picker' || data.startsWith('filter:')) return 'picker';
+  if (data.startsWith('pick:') || data.startsWith('screen:account:')) return 'account';
+  if (data.startsWith('screen:campaigns:')) return 'campaigns';
+  if (data.startsWith('camp:')) return 'campaign';
+  if (data.startsWith('terms:')) return 'terms';
+  if (data.startsWith('convs:')) return 'convs';
+  if (data.startsWith('alerts:')) return 'alerts';
+  if (data.startsWith('madsets:')) return 'madsets';
+  if (data.startsWith('mads:')) return 'mads';
+  return 'account';
+}
+
+export async function handleCallback(chatId, data) {
+  const state = getSession(chatId);
+
+  if (data === 'screen:picker') {
+    state.screen = 'picker';
+    state.accountId = null;
+    state.campaignId = null;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('filter:')) {
+    state.filter = data.slice(7);
+    state.screen = 'picker';
+    state.accountId = null;
+    state.campaignId = null;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('pick:')) {
+    state.screen = 'account';
+    state.accountId = normalizeAccountId(data.slice(5));
+    state.campaignId = null;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('screen:account:')) {
+    state.screen = 'account';
+    state.accountId = normalizeAccountId(data.slice(15));
+    state.campaignId = null;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('screen:campaigns:')) {
+    state.screen = 'campaigns';
+    state.accountId = normalizeAccountId(data.slice(17));
+    state.campaignId = null;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('convs:')) {
+    state.screen = 'convs';
+    state.accountId = normalizeAccountId(data.slice(6));
+    state.campaignId = null;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('alerts:')) {
+    state.screen = 'alerts';
+    state.accountId = normalizeAccountId(data.slice(7));
+    state.campaignId = null;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('camp:') || data.startsWith('terms:') || data.startsWith('madsets:') || data.startsWith('mads:')) {
+    const prefix = data.startsWith('camp:') ? 'camp:' : data.startsWith('terms:') ? 'terms:' : data.startsWith('madsets:') ? 'madsets:' : 'mads:';
+    const rest = data.slice(prefix.length);
+    const splitIndex = rest.lastIndexOf(':');
+    state.accountId = normalizeAccountId(rest.slice(0, splitIndex));
+    state.campaignId = rest.slice(splitIndex + 1);
+    state.screen = prefix === 'camp:' ? 'campaign' : prefix.replace(':', '');
+    return renderScreen(chatId);
+  }
+
+  return renderScreen(chatId);
+}
+
+export function resetSessions() {
+  sessionStore.clear();
+}
