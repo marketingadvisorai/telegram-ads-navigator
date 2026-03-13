@@ -1,4 +1,4 @@
-import { getAccount, getAccounts, getCampaign } from './data.js';
+import { getAccount, getAccounts, getCampaign, getSearchTerms } from './data.js';
 
 const sessionStore = new Map();
 
@@ -58,14 +58,7 @@ function getSession(chatId) {
 function buildPickerScreen() {
   const items = getAccounts().slice(0, 20);
   return {
-    text: [
-      '📊 Ads Navigator',
-      '',
-      'Choose an account.',
-      'Read only mode is on.',
-      '',
-      `Accounts loaded: ${items.length}`,
-    ].join('\n'),
+    text: ['📊 Ads Navigator', '', 'Choose an account.', 'Read only mode is on.', '', `Accounts loaded: ${items.length}`].join('\n'),
     reply_markup: keyboard(items.map((account, index) => [button(`${index + 1}. ${platformIcon(account.platform)} ${account.name}`, `pick:${account.id}`)])),
   };
 }
@@ -119,6 +112,37 @@ function buildCampaignListScreen(accountId) {
   };
 }
 
+function buildSearchTermsScreen(accountId, campaignId) {
+  const account = getAccount(accountId);
+  const campaign = getCampaign(accountId, campaignId);
+  const terms = getSearchTerms(accountId, campaignId).slice(0, 8);
+  if (!account || !campaign) return buildCampaignListScreen(accountId);
+  if (account.platform !== 'Google Ads') {
+    return {
+      text: [`🔎 Search Terms`, '', 'Search terms are available only for Google Ads campaigns right now.', '', `Campaign: ${campaign.name}`].join('\n'),
+      reply_markup: keyboard([
+        [button('Back to campaign', `camp:${account.id}:${campaign.id}`)],
+        [button('Home', 'screen:picker')],
+      ]),
+    };
+  }
+  return {
+    text: [
+      `🔎 Search Terms`,
+      campaign.name,
+      '',
+      ...(terms.length ? terms.map((term, index) => `${index + 1}. ${term.term}\nSpend ${formatMoney(term.spend, account.currency)} | Clicks ${term.clicks} | Conv ${term.conversions}`) : ['No search term rows found for the last 30 days.']),
+      '',
+      `Updated: ${formatUpdated(account.lastUpdated, account.platform)}`,
+    ].join('\n'),
+    reply_markup: keyboard([
+      [button('Refresh', `terms:${account.id}:${campaign.id}`)],
+      [button('Back to campaign', `camp:${account.id}:${campaign.id}`), button('Back to campaigns', `screen:campaigns:${account.id}`)],
+      [button('Home', 'screen:picker')],
+    ]),
+  };
+}
+
 function buildCampaignDetailScreen(accountId, campaignId) {
   const account = getAccount(accountId);
   const campaign = getCampaign(accountId, campaignId);
@@ -144,7 +168,7 @@ function buildCampaignDetailScreen(accountId, campaignId) {
       `Updated: ${formatUpdated(account.lastUpdated, account.platform)}`,
     ].join('\n'),
     reply_markup: keyboard([
-      [button('Refresh', `camp:${account.id}:${campaign.id}`)],
+      [button('Search Terms', `terms:${account.id}:${campaign.id}`), button('Refresh', `camp:${account.id}:${campaign.id}`)],
       [button('Back to campaigns', `screen:campaigns:${account.id}`), button('Back to account', `screen:account:${account.id}`)],
       [button('Home', 'screen:picker')],
     ]),
@@ -156,6 +180,7 @@ export function renderScreen(chatId) {
   if (session.screen === 'account' && session.accountId) return buildAccountScreen(session.accountId);
   if (session.screen === 'campaigns' && session.accountId) return buildCampaignListScreen(session.accountId);
   if (session.screen === 'campaign' && session.accountId && session.campaignId) return buildCampaignDetailScreen(session.accountId, session.campaignId);
+  if (session.screen === 'terms' && session.accountId && session.campaignId) return buildSearchTermsScreen(session.accountId, session.campaignId);
   return buildPickerScreen();
 }
 
@@ -176,40 +201,40 @@ export function handleCallback(chatId, callbackData) {
     session.campaignId = null;
     return renderScreen(chatId);
   }
-
   if (callbackData.startsWith('pick:')) {
-    const accountId = callbackData.slice('pick:'.length);
     session.screen = 'account';
-    session.accountId = accountId;
+    session.accountId = callbackData.slice('pick:'.length);
     session.campaignId = null;
     return renderScreen(chatId);
   }
-
   if (callbackData.startsWith('screen:account:')) {
     session.screen = 'account';
     session.accountId = callbackData.slice('screen:account:'.length);
     session.campaignId = null;
     return renderScreen(chatId);
   }
-
   if (callbackData.startsWith('screen:campaigns:')) {
     session.screen = 'campaigns';
     session.accountId = callbackData.slice('screen:campaigns:'.length);
     session.campaignId = null;
     return renderScreen(chatId);
   }
-
+  if (callbackData.startsWith('terms:')) {
+    const rest = callbackData.slice('terms:'.length);
+    const lastColon = rest.lastIndexOf(':');
+    session.screen = 'terms';
+    session.accountId = rest.slice(0, lastColon);
+    session.campaignId = rest.slice(lastColon + 1);
+    return renderScreen(chatId);
+  }
   if (callbackData.startsWith('camp:')) {
     const rest = callbackData.slice('camp:'.length);
     const lastColon = rest.lastIndexOf(':');
-    const accountId = rest.slice(0, lastColon);
-    const campaignId = rest.slice(lastColon + 1);
     session.screen = 'campaign';
-    session.accountId = accountId;
-    session.campaignId = campaignId;
+    session.accountId = rest.slice(0, lastColon);
+    session.campaignId = rest.slice(lastColon + 1);
     return renderScreen(chatId);
   }
-
   return renderScreen(chatId);
 }
 

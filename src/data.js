@@ -44,3 +44,11 @@ export function getCampaign(accountId, campaignId) {
   }
   return runBridge(googleBridgePath, ['campaign', rawId, campaignId]);
 }
+
+export function getSearchTerms(accountId, campaignId) {
+  const [source, rawId] = String(accountId).includes(':') ? String(accountId).split(':', 2) : ['google', String(accountId)];
+  if (source === 'meta') {
+    return [];
+  }
+  return runBridge(googleBridgePath, ['search_terms', rawId, campaignId]);
+}

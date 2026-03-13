@@ -34,9 +34,13 @@ def list_accounts():
     return accounts
 
 
-def account_summary(customer_id: str):
+def _client(customer_id: str):
     with redirect_stdout(io.StringIO()):
-        client = get_client(customer_id=customer_id)
+        return get_client(customer_id=customer_id)
+
+
+def account_summary(customer_id: str):
+    client = _client(customer_id)
     gaql = """
         SELECT
             customer.id,
@@ -96,8 +100,7 @@ def account_summary(customer_id: str):
 
 
 def campaigns(customer_id: str):
-    with redirect_stdout(io.StringIO()):
-        client = get_client(customer_id=customer_id)
+    client = _client(customer_id)
     gaql = """
         SELECT
             campaign.id,
@@ -147,6 +150,38 @@ def campaign_detail(customer_id: str, campaign_id: str):
     return None
 
 
+def search_terms(customer_id: str, campaign_id: str):
+    client = _client(customer_id)
+    gaql = f"""
+        SELECT
+            campaign.id,
+            campaign.name,
+            search_term_view.search_term,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.cost_micros,
+            metrics.conversions
+        FROM search_term_view
+        WHERE segments.date DURING LAST_30_DAYS
+          AND campaign.id = {campaign_id}
+        ORDER BY metrics.cost_micros DESC
+        LIMIT 10
+    """
+    rows = execute_query(client, customer_id, gaql)
+    out = []
+    for row in rows:
+        out.append({
+            'campaignId': str(row.campaign.id),
+            'campaignName': row.campaign.name,
+            'term': row.search_term_view.search_term,
+            'impressions': int(row.metrics.impressions or 0),
+            'clicks': int(row.metrics.clicks or 0),
+            'spend': round(money(row.metrics.cost_micros), 2),
+            'conversions': round(float(row.metrics.conversions or 0), 2),
+        })
+    return out
+
+
 if __name__ == '__main__':
     cmd = sys.argv[1]
     if cmd == 'accounts':
@@ -157,5 +192,7 @@ if __name__ == '__main__':
         print(json.dumps(campaigns(sys.argv[2])))
     elif cmd == 'campaign':
         print(json.dumps(campaign_detail(sys.argv[2], sys.argv[3])))
+    elif cmd == 'search_terms':
+        print(json.dumps(search_terms(sys.argv[2], sys.argv[3])))
     else:
         raise SystemExit(f'Unknown command: {cmd}')
