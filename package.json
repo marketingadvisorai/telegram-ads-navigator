@@ -3,10 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Telegram-native ads navigator for Google Ads and Meta Ads",
+  "description": "Minimal Telegram Ads Navigator MVP",
   "scripts": {
-    "test": "echo \"Tests not wired yet\"",
-    "lint": "echo \"Lint not wired yet\"",
-    "typecheck": "echo \"Typecheck not wired yet\""
+    "start": "node src/index.js",
+    "simulate": "node scripts/simulate-flow.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
