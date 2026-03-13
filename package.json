@@ -1,0 +1,12 @@
+{
+  "name": "telegram-ads-navigator",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Telegram-native ads navigator for Google Ads and Meta Ads",
+  "scripts": {
+    "test": "echo \"Tests not wired yet\"",
+    "lint": "echo \"Lint not wired yet\"",
+    "typecheck": "echo \"Typecheck not wired yet\""
+  }
+}
