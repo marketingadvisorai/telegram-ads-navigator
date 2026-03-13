@@ -12,6 +12,8 @@ import {
 const sessionStore = new Map();
 const kb = (rows) => ({ inline_keyboard: rows });
 const bt = (text, callbackData) => ({ text, callback_data: callbackData });
+const PICKER_PAGE_SIZE = 6;
+const CAMPAIGN_PAGE_SIZE = 5;
 
 function getSession(chatId) {
   let state = sessionStore.get(chatId);
@@ -21,6 +23,8 @@ function getSession(chatId) {
       accountId: null,
       campaignId: null,
       filter: 'all',
+      pickerPage: 0,
+      campaignPageByAccount: {},
     };
     sessionStore.set(chatId, state);
   }
@@ -41,7 +45,8 @@ function money(amount, currency = 'USD') {
 }
 
 function fmtInt(value) {
-  return Number(value || 0).toLocaleString('en-GB');
+  const numeric = Number(value || 0);
+  return Number.isInteger(numeric) ? numeric.toLocaleString('en-GB') : numeric.toLocaleString('en-GB', { maximumFractionDigits: 2 });
 }
 
 function fmtPct(value) {
@@ -58,8 +63,8 @@ function divider() {
 }
 
 function updatedAt(iso, source = 'live') {
-  if (!iso) return `Updated: live | Source: ${source}`;
-  return `Updated: ${new Date(iso).toISOString().replace('T', ' ').slice(0, 16)} UTC | Source: ${source}`;
+  if (!iso) return `Updated: live • Source: ${source}`;
+  return `Updated: ${new Date(iso).toISOString().replace('T', ' ').slice(0, 16)} UTC • Source: ${source}`;
 }
 
 function statusDot(status = '') {
@@ -87,26 +92,131 @@ function healthDot(item) {
   return '🔴 watch';
 }
 
+function platformIcon(platform = '') {
+  return platform === 'Google Ads' ? '🔎' : '📘';
+}
+
+function platformBadge(platform = '') {
+  return platform === 'Google Ads' ? 'G' : 'M';
+}
+
+function normalizeBusinessKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/google ads|meta ads|ad account|account|act_/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanBusinessLabel(...values) {
+  for (const candidate of values) {
+    const text = String(candidate || '').trim();
+    if (!text) continue;
+    if (/^act_?\d+$/i.test(text)) continue;
+    if (/^\d{6,}$/.test(text)) return `Ad Account ${text.slice(-4)}`;
+    return text;
+  }
+  const fallback = String(values.find(Boolean) || 'Unknown business');
+  return /^\d{6,}$/.test(fallback) ? `Ad Account ${fallback.slice(-4)}` : fallback;
+}
+
 function findSiblingAccount(account, allAccounts) {
   if (!account) return null;
   const targetPlatform = account.platform === 'Google Ads' ? 'Meta Ads' : 'Google Ads';
-  const businessName = String(account.businessName || account.name || '').trim().toLowerCase();
-  const accountName = String(account.name || '').trim().toLowerCase();
+  const targetKey = normalizeBusinessKey(account.businessName || account.name);
+  const targetName = normalizeBusinessKey(account.name || '');
 
   return allAccounts.find((candidate) => {
     if (candidate.platform !== targetPlatform) return false;
-    const candidateBusiness = String(candidate.businessName || candidate.name || '').trim().toLowerCase();
-    const candidateName = String(candidate.name || '').trim().toLowerCase();
-    return candidateBusiness === businessName || candidateName === businessName || candidateName === accountName;
+    const candidateKey = normalizeBusinessKey(candidate.businessName || candidate.name);
+    const candidateName = normalizeBusinessKey(candidate.name || '');
+    return candidateKey === targetKey || candidateName === targetKey || candidateName === targetName;
   }) || null;
+}
+
+function buildBusinessGroups(accounts, filter = 'all') {
+  const groups = new Map();
+
+  for (const account of accounts) {
+    const groupKey = normalizeBusinessKey(account.businessName || account.name || account.id) || account.id;
+    const existing = groups.get(groupKey) || {
+      key: groupKey,
+      label: cleanBusinessLabel(account.businessName, account.name, account.id),
+      accounts: [],
+    };
+    existing.accounts.push(account);
+    if ((account.businessName || '').length < existing.label.length) {
+      existing.label = cleanBusinessLabel(account.businessName, account.name, account.id);
+    }
+    groups.set(groupKey, existing);
+  }
+
+  return [...groups.values()]
+    .map((group) => {
+      const google = group.accounts.find((item) => item.platform === 'Google Ads') || null;
+      const meta = group.accounts.find((item) => item.platform === 'Meta Ads') || null;
+      const preferred = filter === 'google' ? (google || meta) : filter === 'meta' ? (meta || google) : (google || meta || group.accounts[0]);
+      const badges = [google ? 'G' : null, meta ? 'M' : null].filter(Boolean).join(' • ');
+      return {
+        ...group,
+        google,
+        meta,
+        preferred,
+        badges,
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function pageSlice(items, page, pageSize) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+  const start = safePage * pageSize;
+  return {
+    safePage,
+    totalPages,
+    start,
+    end: Math.min(start + pageSize, items.length),
+    items: items.slice(start, start + pageSize),
+  };
+}
+
+function pagerRow(prefix, page, totalPages) {
+  return [
+    bt(page > 0 ? '◀ Prev' : '·', page > 0 ? `${prefix}:${page - 1}` : 'noop'),
+    bt(`Page ${page + 1}/${totalPages}`, 'noop'),
+    bt(page < totalPages - 1 ? 'Next ▶' : '·', page < totalPages - 1 ? `${prefix}:${page + 1}` : 'noop'),
+  ];
+}
+
+function campaignPageFor(state, accountId, campaigns) {
+  const stored = Number(state.campaignPageByAccount[accountId] || 0);
+  if (!state.campaignId) return stored;
+  const index = campaigns.findIndex((campaign) => String(campaign.id) === String(state.campaignId));
+  return index >= 0 ? Math.floor(index / CAMPAIGN_PAGE_SIZE) : stored;
+}
+
+function accountShortId(account) {
+  const raw = String(account?.id || '').split(':').pop() || '';
+  return raw ? `#${raw.slice(-4)}` : '';
+}
+
+function campaignButtonLabel(campaign, indexOnPage) {
+  const status = statusDot(campaign.status);
+  const health = healthDot(campaign).split(' ')[0];
+  return `${indexOnPage + 1}. ${status}${health} ${shorten(campaign.name, 24)}`;
 }
 
 async function renderPicker(chatId) {
   const state = getSession(chatId);
   const allAccounts = getAccounts('all');
-  const visibleAccounts = getAccounts(state.filter).slice(0, 20);
+  const visibleAccounts = getAccounts(state.filter);
+  const businesses = buildBusinessGroups(visibleAccounts, state.filter);
   const googleCount = getAccounts('google').length;
   const metaCount = getAccounts('meta').length;
+  const page = pageSlice(businesses, state.pickerPage, PICKER_PAGE_SIZE);
+  state.pickerPage = page.safePage;
 
   const title = state.filter === 'google'
     ? '🔎 Google Ads Navigator'
@@ -114,24 +224,48 @@ async function renderPicker(chatId) {
       ? '📘 Meta Ads Navigator'
       : '✨ Ads Navigator';
 
-  return {
-    text: [
-      title,
-      'Read only command center',
-      divider(),
-      'Choose an account to inspect.',
-      `Google accounts: ${googleCount}`,
-      `Meta accounts: ${metaCount}`,
-      '',
-      `Showing: ${visibleAccounts.length} of ${allAccounts.length} accounts`,
-    ].join('\n'),
-    reply_markup: kb([
-      [bt(state.filter === 'all' ? '• All' : 'All', 'filter:all'), bt(state.filter === 'google' ? '• Google' : 'Google', 'filter:google'), bt(state.filter === 'meta' ? '• Meta' : 'Meta', 'filter:meta')],
-      ...visibleAccounts.map((account, index) => [
-        bt(`${index + 1}. ${account.platform === 'Google Ads' ? '🔎' : '📘'} ${shorten(account.businessName || account.name, 26)}`, `pick:${account.id}`),
-      ]),
-    ]),
-  };
+  const lines = [
+    title,
+    'Home / Accounts',
+    divider(),
+    'Choose a business to inspect.',
+    `Businesses: ${businesses.length} • Accounts: ${visibleAccounts.length}`,
+    `Google: ${googleCount} • Meta: ${metaCount}`,
+    page.items.length
+      ? `Showing ${page.start + 1}-${page.end} of ${businesses.length} businesses`
+      : 'No accounts found for this filter.',
+    '',
+  ];
+
+  if (page.items.length) {
+    lines.push(
+      ...page.items.map((group, index) => {
+        const accounts = group.accounts
+          .sort((a, b) => (a.platform === 'Google Ads' ? -1 : 1) - (b.platform === 'Google Ads' ? -1 : 1))
+          .map((account) => `${platformBadge(account.platform)} ${accountShortId(account)}`.trim())
+          .join(' • ');
+        return `${page.start + index + 1}. ${group.label}  [${group.badges}]\n   ${accounts}`;
+      }),
+    );
+  }
+
+  const rows = [
+    [bt(state.filter === 'all' ? '• All accounts' : 'All accounts', 'filter:all')],
+    [bt(state.filter === 'google' ? '• Google only' : 'Google only', 'filter:google'), bt(state.filter === 'meta' ? '• Meta only' : 'Meta only', 'filter:meta')],
+    ...page.items.flatMap((group) => {
+      const mainRow = [bt(`${group.google && group.meta ? '🏢' : platformIcon(group.preferred?.platform)} ${shorten(group.label, 24)}`, `biz:${group.key}`)];
+      if (group.google && group.meta && state.filter === 'all') {
+        return [
+          mainRow,
+          [bt('🔎 Google', `pick:${group.google.id}`), bt('📘 Meta', `pick:${group.meta.id}`)],
+        ];
+      }
+      return [mainRow];
+    }),
+    pagerRow('page:picker', page.safePage, page.totalPages),
+  ];
+
+  return { text: lines.join('\n'), reply_markup: kb(rows) };
 }
 
 async function renderAccountSummary(accountId) {
@@ -140,93 +274,108 @@ async function renderAccountSummary(accountId) {
 
   const sibling = findSiblingAccount(account, getAccounts('all'));
   const isGoogle = account.platform === 'Google Ads';
+  const alertsCount = getAlerts(account.id).length;
 
   return {
     text: [
-      `${isGoogle ? '🔎' : '📘'} ${account.businessName || account.name}`,
-      `${account.platform} summary`,
+      `${platformIcon(account.platform)} ${account.businessName || account.name}`,
+      `Accounts / ${account.businessName || account.name}`,
       divider(),
-      `Spend: ${money(account.summary.spend, account.currency)}`,
-      `Clicks: ${fmtInt(account.summary.clicks)}`,
-      `${isGoogle ? 'Conversions' : 'Purchases'}: ${fmtInt(account.summary.conversions)}`,
-      `CPA: ${money(account.summary.cpa, account.currency)}`,
-      `CTR: ${fmtPct(account.summary.ctr)}`,
+      `${account.platform} • ${account.name}${accountShortId(account) ? ` • ${accountShortId(account)}` : ''}`,
+      `Spend ${money(account.summary.spend, account.currency)} • Clicks ${fmtInt(account.summary.clicks)} • ${isGoogle ? 'Conv' : 'Purch'} ${fmtInt(account.summary.conversions)}`,
+      `CPA ${money(account.summary.cpa, account.currency)} • CTR ${fmtPct(account.summary.ctr)}`,
       '',
       'Quick view',
-      `${statusDot('active')} Active campaigns: ${fmtInt(account.summary.activeCampaigns)}`,
-      `${statusDot('paused')} Paused campaigns: ${fmtInt(account.summary.pausedCampaigns)}`,
+      `${statusDot('active')} Active ${fmtInt(account.summary.activeCampaigns)} • ${statusDot('paused')} Paused ${fmtInt(account.summary.pausedCampaigns)}`,
+      `🚨 Alerts ${fmtInt(alertsCount)} • Pair ${sibling ? `${platformBadge(account.platform)} ⇄ ${platformBadge(sibling.platform)}` : 'single platform'}`,
       '',
       updatedAt(account.lastUpdated, 'live'),
     ].join('\n'),
     reply_markup: kb([
-      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Alerts', `alerts:${account.id}`)],
+      [bt('📋 Campaigns', `screen:campaigns:${account.id}`), bt('🚨 Alerts', `alerts:${account.id}`)],
       isGoogle
-        ? [bt('Conversions', `convs:${account.id}`), sibling ? bt('Meta overview', `screen:account:${sibling.id}`) : bt('Refresh', `screen:account:${account.id}`)]
-        : [sibling ? bt('Google summary', `screen:account:${sibling.id}`) : bt('Refresh', `screen:account:${account.id}`), bt('Refresh', `screen:account:${account.id}`)],
-      [bt('Home', 'screen:picker')],
+        ? [bt('⚙️ Conversions', `convs:${account.id}`), bt(sibling ? '📘 Open Meta' : '🔄 Refresh summary', sibling ? `screen:account:${sibling.id}` : `screen:account:${account.id}`)]
+        : [bt(sibling ? '🔎 Open Google' : '🔄 Refresh summary', sibling ? `screen:account:${sibling.id}` : `screen:account:${account.id}`), bt('🔄 Refresh summary', `screen:account:${account.id}`)],
+      [bt('⬅ Back to Accounts', 'screen:picker')],
     ]),
   };
 }
 
-async function renderCampaignList(accountId) {
+async function renderCampaignList(chatId, accountId) {
+  const state = getSession(chatId);
   const account = getAccount(accountId);
-  if (!account) return renderPicker(0);
+  if (!account) return renderPicker(chatId);
 
-  const campaigns = (account.campaigns || []).slice(0, 5);
+  const campaigns = account.campaigns || [];
+  const page = pageSlice(campaigns, campaignPageFor(state, account.id, campaigns), CAMPAIGN_PAGE_SIZE);
+  state.campaignPageByAccount[account.id] = page.safePage;
+
   return {
     text: [
-      `${account.platform === 'Google Ads' ? '📋' : '📘'} ${account.businessName || account.name}`,
-      `${account.platform} campaigns`,
+      `📋 Campaigns`,
+      `${account.businessName || account.name} / Campaigns`,
       divider(),
-      campaigns.length
-        ? campaigns.map((campaign, index) => [
-            `${index + 1}. ${statusDot(campaign.status)} ${shorten(campaign.name, 34)}`,
-            `   ${healthDot(campaign)}  |  Spend ${money(campaign.spend, account.currency)}  |  Conv ${fmtInt(campaign.conversions)}  |  CPA ${money(campaign.cpa, account.currency)}`,
+      `Showing ${campaigns.length ? page.start + 1 : 0}-${page.end} of ${campaigns.length} • Sorted by spend`,
+      `Platform: ${account.platform}`,
+      '',
+      page.items.length
+        ? page.items.map((campaign, index) => [
+            `${page.start + index + 1}. ${statusDot(campaign.status)} ${shorten(campaign.name, 34)}`,
+            `   ${campaign.type} • ${healthDot(campaign)}`,
+            `   Spend ${money(campaign.spend, account.currency)} • Conv ${fmtInt(campaign.conversions)} • CPA ${money(campaign.cpa, account.currency)}`,
           ].join('\n')).join('\n\n')
         : 'No campaign rows found.',
       '',
       updatedAt(account.lastUpdated, 'live'),
     ].join('\n'),
     reply_markup: kb([
-      campaigns.length ? campaigns.map((campaign, index) => bt(String(index + 1), `camp:${account.id}:${campaign.id}`)) : [bt('Account', `screen:account:${account.id}`)],
-      [bt('Refresh', `screen:campaigns:${account.id}`), bt('Account', `screen:account:${account.id}`)],
-      [bt('Home', 'screen:picker')],
+      ...page.items.map((campaign, index) => [bt(campaignButtonLabel(campaign, index), `camp:${account.id}:${campaign.id}`)]),
+      pagerRow(`page:campaigns:${account.id}`, page.safePage, page.totalPages),
+      [bt('⬅ Back to Account', `screen:account:${account.id}`), bt('🔄 Refresh list', `screen:campaigns:${account.id}`)],
+      [bt('🏠 Home', 'screen:picker')],
     ]),
   };
 }
 
-async function renderCampaignDetail(accountId, campaignId) {
+async function renderCampaignDetail(chatId, accountId, campaignId) {
+  const state = getSession(chatId);
   const account = getAccount(accountId);
   const campaign = getCampaign(accountId, campaignId);
   if (!account || !campaign) return renderAccountSummary(accountId);
 
+  const campaigns = account.campaigns || [];
+  const campaignIndex = campaigns.findIndex((item) => String(item.id) === String(campaign.id));
+  if (campaignIndex >= 0) {
+    state.campaignPageByAccount[account.id] = Math.floor(campaignIndex / CAMPAIGN_PAGE_SIZE);
+  }
+  const prev = campaignIndex > 0 ? campaigns[campaignIndex - 1] : null;
+  const next = campaignIndex >= 0 && campaignIndex < campaigns.length - 1 ? campaigns[campaignIndex + 1] : null;
   const isMeta = account.platform === 'Meta Ads';
+
   return {
     text: [
-      `🎯 ${campaign.name}`,
-      `${account.businessName || account.name}`,
+      '🎯 Campaign Detail',
+      `${account.businessName || account.name} / ${campaign.name}`,
       divider(),
       `${statusDot(campaign.status)} Status: ${campaign.status}`,
-      `Channel: ${campaign.type}`,
+      `Type: ${campaign.type}`,
       `Strategy: ${campaign.bidding}`,
       `Daily budget: ${money(campaign.budgetDaily, account.currency)}`,
       '',
-      `Spend: ${money(campaign.spend, account.currency)}`,
-      `Clicks: ${fmtInt(campaign.clicks)}`,
-      `${isMeta ? 'Purchases' : 'Conversions'}: ${fmtInt(campaign.conversions)}`,
-      `CPA: ${money(campaign.cpa, account.currency)}`,
-      `CTR: ${fmtPct(campaign.ctr)}`,
-      `Avg CPC: ${money(campaign.avgCpc, account.currency)}`,
+      `Spend: ${money(campaign.spend, account.currency)} • Clicks: ${fmtInt(campaign.clicks)}`,
+      `${isMeta ? 'Purch' : 'Conv'}: ${fmtInt(campaign.conversions)} • CPA: ${money(campaign.cpa, account.currency)}`,
+      `CTR: ${fmtPct(campaign.ctr)} • Avg CPC: ${money(campaign.avgCpc, account.currency)}`,
       '',
       `Assessment: ${healthDot(campaign)}`,
       updatedAt(account.lastUpdated, 'live'),
     ].join('\n'),
     reply_markup: kb([
       isMeta
-        ? [bt('Ad sets', `madsets:${account.id}:${campaign.id}`), bt('Ads', `mads:${account.id}:${campaign.id}`)]
-        : [bt('Search terms', `terms:${account.id}:${campaign.id}`), bt('Conversions', `convs:${account.id}`)],
-      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Account', `screen:account:${account.id}`)],
-      [bt('Home', 'screen:picker')],
+        ? [bt('🧩 Ad sets', `madsets:${account.id}:${campaign.id}`), bt('📣 Ads', `mads:${account.id}:${campaign.id}`)]
+        : [bt('🔎 Search Terms', `terms:${account.id}:${campaign.id}`), bt('⚙️ Conversions', `convs:${account.id}`)],
+      [bt(prev ? '◀ Prev Campaign' : '·', prev ? `camp:${account.id}:${prev.id}` : 'noop'), bt(next ? 'Next Campaign ▶' : '·', next ? `camp:${account.id}:${next.id}` : 'noop')],
+      [bt('⬅ Back to Campaigns', `screen:campaigns:${account.id}`), bt('🔄 Refresh card', `camp:${account.id}:${campaign.id}`)],
+      [bt('🏠 Home', 'screen:picker')],
     ]),
   };
 }
@@ -238,8 +387,8 @@ async function renderSearchTerms(accountId, campaignId) {
 
   if (account.platform !== 'Google Ads') {
     return {
-      text: ['🔎 Search terms', divider(), 'Search terms are available only for Google Ads.', '', `Campaign: ${campaign.name}`].join('\n'),
-      reply_markup: kb([[bt('Campaign', `camp:${account.id}:${campaign.id}`), bt('Home', 'screen:picker')]]),
+      text: ['🔎 Search Terms', `${account.businessName || account.name} / ${campaign.name}`, divider(), 'Search terms are available only for Google Ads.', '', updatedAt(account.lastUpdated, 'live')].join('\n'),
+      reply_markup: kb([[bt('⬅ Back to Campaign', `camp:${account.id}:${campaign.id}`), bt('🏠 Home', 'screen:picker')]]),
     };
   }
 
@@ -248,13 +397,13 @@ async function renderSearchTerms(accountId, campaignId) {
 
   return {
     text: [
-      '🔎 Search terms',
-      `${campaign.name}`,
+      '🔎 Search Terms',
+      `${account.businessName || account.name} / ${campaign.name}`,
       divider(),
       terms.length
         ? terms.map((term, index) => [
             `${index + 1}. ${shorten(term.term, 36)}`,
-            `   ${Number(term.conversions || 0) > 0 ? '🟢' : '🔴'} Spend ${money(term.spend, account.currency)}  |  Clicks ${fmtInt(term.clicks)}  |  Conv ${fmtInt(term.conversions)}`,
+            `   ${Number(term.conversions || 0) > 0 ? '🟢 converting' : '🔴 no conv'} • Spend ${money(term.spend, account.currency)} • Clicks ${fmtInt(term.clicks)} • Conv ${fmtInt(term.conversions)}`,
           ].join('\n')).join('\n\n')
         : 'No search term rows found for this range.',
       '',
@@ -262,8 +411,8 @@ async function renderSearchTerms(accountId, campaignId) {
       updatedAt(account.lastUpdated, 'live'),
     ].join('\n'),
     reply_markup: kb([
-      [bt('Refresh', `terms:${account.id}:${campaign.id}`), bt('Campaign', `camp:${account.id}:${campaign.id}`)],
-      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Home', 'screen:picker')],
+      [bt('🔄 Refresh terms', `terms:${account.id}:${campaign.id}`), bt('⬅ Back to Campaign', `camp:${account.id}:${campaign.id}`)],
+      [bt('📋 Campaigns', `screen:campaigns:${account.id}`), bt('🏠 Home', 'screen:picker')],
     ]),
   };
 }
@@ -274,8 +423,8 @@ async function renderConversions(accountId) {
 
   if (account.platform !== 'Google Ads') {
     return {
-      text: ['⚙️ Conversion actions', divider(), 'Detailed conversion actions are available only for Google Ads right now.'].join('\n'),
-      reply_markup: kb([[bt('Account', `screen:account:${account.id}`), bt('Home', 'screen:picker')]]),
+      text: ['⚙️ Conversion Actions', `${account.businessName || account.name}`, divider(), 'Detailed conversion actions are available only for Google Ads right now.'].join('\n'),
+      reply_markup: kb([[bt('⬅ Back to Account', `screen:account:${account.id}`), bt('🏠 Home', 'screen:picker')]]),
     };
   }
 
@@ -284,19 +433,19 @@ async function renderConversions(accountId) {
 
   return {
     text: [
-      '⚙️ Conversion actions',
-      `${account.businessName || account.name}`,
+      '⚙️ Conversion Actions',
+      `${account.businessName || account.name} / Settings`,
       divider(),
       actions.length
-        ? actions.map((action, index) => `${index + 1}. ${shorten(action.name, 32)}\n   ${action.primary ? '🟢 primary' : '⚪ secondary'}  |  ${shorten(action.type, 12)}  |  ${shorten(action.category, 14)}`).join('\n\n')
+        ? actions.map((action, index) => `${index + 1}. ${shorten(action.name, 32)}\n   ${action.primary ? '🟢 primary' : '⚪ secondary'} • ${shorten(action.type, 12)} • ${shorten(action.category, 14)}`).join('\n\n')
         : 'No conversion actions found.',
       '',
       `Audit: ${primaryCount > 5 ? '🟡' : '🟢'} ${primaryCount} visible actions are primary`,
       updatedAt(account.lastUpdated, 'live'),
     ].join('\n'),
     reply_markup: kb([
-      [bt('Refresh', `convs:${account.id}`), bt('Account', `screen:account:${account.id}`)],
-      [bt('Home', 'screen:picker')],
+      [bt('🔄 Refresh actions', `convs:${account.id}`), bt('⬅ Back to Account', `screen:account:${account.id}`)],
+      [bt('🏠 Home', 'screen:picker')],
     ]),
   };
 }
@@ -309,15 +458,15 @@ async function renderAlerts(accountId) {
   return {
     text: [
       '🚨 Alerts',
-      `${account.businessName || account.name}`,
+      `${account.businessName || account.name} / Alerts`,
       divider(),
       alerts.length ? alerts.map((alert, index) => `${index + 1}. ${severityDot(alert.severity)} ${alert.text}`).join('\n\n') : '🟢 No major alerts right now.',
       '',
       updatedAt(account.lastUpdated, 'computed'),
     ].join('\n'),
     reply_markup: kb([
-      [bt('Refresh', `alerts:${account.id}`), bt('Account', `screen:account:${account.id}`)],
-      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Home', 'screen:picker')],
+      [bt('🔄 Refresh alerts', `alerts:${account.id}`), bt('⬅ Back to Account', `screen:account:${account.id}`)],
+      [bt('📋 Campaigns', `screen:campaigns:${account.id}`), bt('🏠 Home', 'screen:picker')],
     ]),
   };
 }
@@ -330,21 +479,21 @@ async function renderMetaAdSets(accountId, campaignId) {
   const items = getMetaAdsets(accountId, campaignId).slice(0, 8);
   return {
     text: [
-      '🧩 Meta ad sets',
-      `${campaign.name}`,
+      '🧩 Meta Ad Sets',
+      `${account.businessName || account.name} / ${campaign.name}`,
       divider(),
       items.length
         ? items.map((item, index) => [
             `${index + 1}. ${statusDot(item.status)} ${shorten(item.name, 34)}`,
-            `   ${healthDot(item)}  |  Spend ${money(item.spend, account.currency)}  |  Conv ${fmtInt(item.conversions)}  |  CPA ${money(item.cpa, account.currency)}`,
+            `   ${healthDot(item)} • Spend ${money(item.spend, account.currency)} • Conv ${fmtInt(item.conversions)} • CPA ${money(item.cpa, account.currency)}`,
           ].join('\n')).join('\n\n')
         : 'No ad sets found.',
       '',
       updatedAt(account.lastUpdated, 'live'),
     ].join('\n'),
     reply_markup: kb([
-      [bt('Ads', `mads:${account.id}:${campaign.id}`), bt('Campaign', `camp:${account.id}:${campaign.id}`)],
-      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Home', 'screen:picker')],
+      [bt('📣 Ads', `mads:${account.id}:${campaign.id}`), bt('⬅ Back to Campaign', `camp:${account.id}:${campaign.id}`)],
+      [bt('📋 Campaigns', `screen:campaigns:${account.id}`), bt('🏠 Home', 'screen:picker')],
     ]),
   };
 }
@@ -357,21 +506,21 @@ async function renderMetaAds(accountId, campaignId) {
   const items = getMetaAds(accountId, campaignId).slice(0, 8);
   return {
     text: [
-      '📣 Meta ads',
-      `${campaign.name}`,
+      '📣 Meta Ads',
+      `${account.businessName || account.name} / ${campaign.name}`,
       divider(),
       items.length
         ? items.map((item, index) => [
             `${index + 1}. ${statusDot(item.status)} ${shorten(item.name, 34)}`,
-            `   ${healthDot(item)}  |  Spend ${money(item.spend, account.currency)}  |  Conv ${fmtInt(item.conversions)}  |  CPA ${money(item.cpa, account.currency)}`,
+            `   ${healthDot(item)} • Spend ${money(item.spend, account.currency)} • Conv ${fmtInt(item.conversions)} • CPA ${money(item.cpa, account.currency)}`,
           ].join('\n')).join('\n\n')
         : 'No ads found.',
       '',
       updatedAt(account.lastUpdated, 'live'),
     ].join('\n'),
     reply_markup: kb([
-      [bt('Ad sets', `madsets:${account.id}:${campaign.id}`), bt('Campaign', `camp:${account.id}:${campaign.id}`)],
-      [bt('Campaigns', `screen:campaigns:${account.id}`), bt('Home', 'screen:picker')],
+      [bt('🧩 Ad sets', `madsets:${account.id}:${campaign.id}`), bt('⬅ Back to Campaign', `camp:${account.id}:${campaign.id}`)],
+      [bt('📋 Campaigns', `screen:campaigns:${account.id}`), bt('🏠 Home', 'screen:picker')],
     ]),
   };
 }
@@ -379,8 +528,8 @@ async function renderMetaAds(accountId, campaignId) {
 export async function renderScreen(chatId) {
   const state = getSession(chatId);
   if (state.screen === 'account' && state.accountId) return renderAccountSummary(state.accountId);
-  if (state.screen === 'campaigns' && state.accountId) return renderCampaignList(state.accountId);
-  if (state.screen === 'campaign' && state.accountId && state.campaignId) return renderCampaignDetail(state.accountId, state.campaignId);
+  if (state.screen === 'campaigns' && state.accountId) return renderCampaignList(chatId, state.accountId);
+  if (state.screen === 'campaign' && state.accountId && state.campaignId) return renderCampaignDetail(chatId, state.accountId, state.campaignId);
   if (state.screen === 'terms' && state.accountId && state.campaignId) return renderSearchTerms(state.accountId, state.campaignId);
   if (state.screen === 'convs' && state.accountId) return renderConversions(state.accountId);
   if (state.screen === 'alerts' && state.accountId) return renderAlerts(state.accountId);
@@ -395,13 +544,14 @@ export async function openAds(chatId, filter = 'all') {
   state.accountId = null;
   state.campaignId = null;
   state.filter = filter;
+  state.pickerPage = 0;
   return renderScreen(chatId);
 }
 
 export function getActionType(data) {
-  if (!data || data === 'screen:picker' || data.startsWith('filter:')) return 'picker';
-  if (data.startsWith('pick:') || data.startsWith('screen:account:')) return 'account';
-  if (data.startsWith('screen:campaigns:')) return 'campaigns';
+  if (!data || data === 'screen:picker' || data.startsWith('filter:') || data.startsWith('page:picker') || data === 'noop') return 'picker';
+  if (data.startsWith('pick:') || data.startsWith('screen:account:') || data.startsWith('biz:')) return 'account';
+  if (data.startsWith('screen:campaigns:') || data.startsWith('page:campaigns:')) return 'campaigns';
   if (data.startsWith('camp:')) return 'campaign';
   if (data.startsWith('terms:')) return 'terms';
   if (data.startsWith('convs:')) return 'convs';
@@ -414,6 +564,10 @@ export function getActionType(data) {
 export async function handleCallback(chatId, data) {
   const state = getSession(chatId);
 
+  if (data === 'noop') {
+    return renderScreen(chatId);
+  }
+
   if (data === 'screen:picker') {
     state.screen = 'picker';
     state.accountId = null;
@@ -425,6 +579,25 @@ export async function handleCallback(chatId, data) {
     state.filter = data.slice(7);
     state.screen = 'picker';
     state.accountId = null;
+    state.campaignId = null;
+    state.pickerPage = 0;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('page:picker:')) {
+    state.screen = 'picker';
+    state.accountId = null;
+    state.campaignId = null;
+    state.pickerPage = Number(data.slice(12)) || 0;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('biz:')) {
+    const key = data.slice(4);
+    const groups = buildBusinessGroups(getAccounts(state.filter), state.filter);
+    const group = groups.find((item) => item.key === key);
+    state.screen = 'account';
+    state.accountId = normalizeAccountId(group?.preferred?.id || groups[0]?.preferred?.id || null);
     state.campaignId = null;
     return renderScreen(chatId);
   }
@@ -440,6 +613,18 @@ export async function handleCallback(chatId, data) {
     state.screen = 'account';
     state.accountId = normalizeAccountId(data.slice(15));
     state.campaignId = null;
+    return renderScreen(chatId);
+  }
+
+  if (data.startsWith('page:campaigns:')) {
+    const rest = data.slice(15);
+    const splitIndex = rest.lastIndexOf(':');
+    const accountId = normalizeAccountId(rest.slice(0, splitIndex));
+    const page = Number(rest.slice(splitIndex + 1)) || 0;
+    state.screen = 'campaigns';
+    state.accountId = accountId;
+    state.campaignId = null;
+    state.campaignPageByAccount[accountId] = page;
     return renderScreen(chatId);
   }
 
