@@ -9,13 +9,8 @@ const metaBridgePath = path.join(__dirname, 'meta_ads_bridge.py');
 const pythonPath = '/opt/openclaw/workspace/google-ads/.venv/bin/python';
 
 function runBridge(scriptPath, args) {
-  const result = spawnSync(pythonPath, [scriptPath, ...args], {
-    encoding: 'utf8',
-    env: { ...process.env, PYTHONUNBUFFERED: '1' },
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout || 'Bridge failed');
-  }
+  const result = spawnSync(pythonPath, [scriptPath, ...args], { encoding: 'utf8', env: { ...process.env, PYTHONUNBUFFERED: '1' } });
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout || 'Bridge failed');
   return JSON.parse(result.stdout || 'null');
 }
 
@@ -41,16 +36,20 @@ export function getAccount(accountId) {
 
 export function getCampaign(accountId, campaignId) {
   const [source, rawId] = String(accountId).includes(':') ? String(accountId).split(':', 2) : ['google', String(accountId)];
-  if (source === 'meta') {
-    return runBridge(metaBridgePath, ['campaign', rawId, campaignId]);
-  }
-  return runBridge(googleBridgePath, ['campaign', rawId, campaignId]);
+  return source === 'meta' ? runBridge(metaBridgePath, ['campaign', rawId, campaignId]) : runBridge(googleBridgePath, ['campaign', rawId, campaignId]);
 }
 
 export function getSearchTerms(accountId, campaignId) {
   const [source, rawId] = String(accountId).includes(':') ? String(accountId).split(':', 2) : ['google', String(accountId)];
-  if (source === 'meta') {
-    return [];
-  }
-  return runBridge(googleBridgePath, ['search_terms', rawId, campaignId]);
+  return source === 'meta' ? [] : runBridge(googleBridgePath, ['search_terms', rawId, campaignId]);
+}
+
+export function getConversionActions(accountId) {
+  const [source, rawId] = String(accountId).includes(':') ? String(accountId).split(':', 2) : ['google', String(accountId)];
+  return source === 'meta' ? [] : runBridge(googleBridgePath, ['conversion_actions', rawId]);
+}
+
+export function getAlerts(accountId) {
+  const [source, rawId] = String(accountId).includes(':') ? String(accountId).split(':', 2) : ['google', String(accountId)];
+  return source === 'meta' ? runBridge(metaBridgePath, ['alerts', rawId]) : runBridge(googleBridgePath, ['alerts', rawId]);
 }
